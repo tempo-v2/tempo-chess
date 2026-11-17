@@ -11,8 +11,8 @@ use crate::{Catalog, ChessError, ImportRequest};
 /// content. Parsing does not persist content, overwrite learning or decide an
 /// application transaction.
 ///
-/// [`crate::FixtureParser`] registers exact inputs for wiring tests. A production
-/// parser can implement this trait without changing the import command's shape.
+/// [`crate::FixtureParser`] registers exact inputs for wiring tests.
+/// [`crate::RepertoirePgnParser`] imports orthodox repertoire mainlines.
 ///
 /// ```
 /// use tempo_chess::{ContentParser, ImportRequest, demo_parser, REPERTOIRE_PGN};
@@ -22,6 +22,7 @@ use crate::{Catalog, ChessError, ImportRequest};
 ///         pgn: REPERTOIRE_PGN.into(),
 ///         source: "My repertoire export".into(),
 ///         repertoire: Some("r1".into()),
+///         learner_color: None,
 ///     })
 /// }
 /// let proposed = read_repertoire(&demo_parser())?;
@@ -46,6 +47,7 @@ mod tests {
                 pgn: REPERTOIRE_PGN.into(),
                 source: "My opening file".into(),
                 repertoire: Some("r1".into()),
+                learner_color: None,
             })
             .unwrap();
         let plan = plan_import(&current, &proposed).unwrap();

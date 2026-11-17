@@ -68,10 +68,13 @@ than silent reinterpretations of old attempts.
 
 | Concept | File | Usage scenario in that file |
 | --- | --- | --- |
-| PGN plus source/repertoire context | [import_request.rs](src/import_request.rs) | Reject a mismatched repertoire and retain source provenance. |
+| PGN plus source, repertoire and learner color | [import_request.rs](src/import_request.rs) | Reject a mismatched repertoire, retain provenance, and preserve legacy requests. |
 | Parser interface | [content_parser.rs](src/content_parser.rs) | Parse and plan through the trait without a store. |
+| Standard repertoire PGN import | [repertoire_pgn_parser.rs](src/repertoire_pgn_parser.rs) | Import legal mainlines, share transposed positions, and preserve versions across annotation edits. |
+| Learner color | [learner_color.rs](src/learner_color.rs) | Study Black's reply from a White-to-move starting position. |
 | Registered parser substitute | [fixture_parser.rs](src/fixture_parser.rs) | Known PGN works; unknown input explicitly fails. |
 | Position identity interface | [position_canonicalizer.rs](src/position_canonicalizer.rs) | Ask the trait for a key instead of treating raw FEN as identity. |
+| Orthodox position identity | [standard_position_canonicalizer.rs](src/standard_position_canonicalizer.rs) | Distinguish castling rights, side to move, and legally effective en passant while ignoring move counters. |
 | Registered identity substitute | [fixture_canonicalizer.rs](src/fixture_canonicalizer.rs) | Explicitly map two FEN counter variants to one key. |
 | Pure game comparison interface | [game_comparator.rs](src/game_comparator.rs) | Compare a supplied game with an explicit content snapshot. |
 | Registered comparison substitute | [fixture_comparator.rs](src/fixture_comparator.rs) | Validate referenced targets and reject unknown games. |
@@ -98,10 +101,24 @@ structural target/line validation, semantic content changes and quarantine
 planning. Move/FEN shape checks do not validate chess legality or calculate the
 best move. A `PositionKey` is not itself a canonicalizer.
 
-The fixture parser, canonicalizer and comparator accept registered inputs only.
-They are replacement points for a real chess library and PGN/game algorithms.
-`demo_catalog()` uses legal opening positions to exercise the interfaces; its
-two-decision example is not a tactical-puzzle recommendation.
+`RepertoirePgnParser` requires a repertoire name and `LearnerColor`. It accepts
+up to 256 KiB, 32 games, and 512 mainline plies per game. Every game starts from
+the orthodox initial position and ends with a result marker. Use standard SAN.
+Tags, comments, annotations, and balanced variations are skipped, apart from
+tags that specify rules, starting position, or result. The parser checks every
+mainline move and uses the opponent's moves to reach later positions. Import
+produces only repertoire targets in this round. It rejects competing responses
+to the same position within one request.
+
+`StandardPositionCanonicalizer` checks standard-chess positions with
+`cozy-chess`. The record key uses the first four FEN fields and retains an en
+passant square when a legal capture exists. The importer uses this key with
+fixed counters for the prompt, so changing the move order into a transposition
+does not revise the definition by itself.
+
+The fixture parser, canonicalizer and comparator still accept only their
+registered inputs. `demo_catalog()` uses legal opening positions to exercise
+the interfaces.
 
 ## Run the examples
 
@@ -118,6 +135,5 @@ cargo clippy -p tempo-chess --all-targets -- -D warnings
 
 The root [lib.rs](src/lib.rs) is an export index. The longer grader and import
 files keep each algorithm with its behavior scenarios; `demo_fixtures.rs` keeps
-one dataset together. No new crate dependencies or persisted shapes are added
-by this source organization. Initial `=0.1.0` dependencies still use the local
-workspace patches until coordinated releases are available.
+one dataset together. Initial `=0.1.0` dependencies still use the local workspace
+patches until coordinated releases are available.

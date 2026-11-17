@@ -11,10 +11,9 @@ use serde::{Deserialize, Serialize};
 /// and catalog validation consume it. The repertoire name is also part of a
 /// repertoire target's identity, so the same position may belong to two repertoires.
 ///
-/// The wrapper does not canonicalize or validate its string. Production
-/// canonicalization must account for side to move, castling and legally effective
-/// en-passant rights while ignoring move counters. Current fixtures register the
-/// mapping explicitly; they do not implement those chess rules.
+/// The wrapper does not validate its string. The standard canonicalizer keeps
+/// side to move, castling and legally effective en-passant rights while ignoring
+/// move counters. Fixtures register their own mappings for wiring tests.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct PositionKey(pub String);

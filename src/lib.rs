@@ -1,8 +1,8 @@
 //! Chess content contracts, prescribed-move grading and explicit fixtures.
 //!
 //! Start with [`Catalog`], then [`ContentItem`] and [`ChessDefinition`]. Each
-//! named module owns one concept and its usage scenarios. No engine, general
-//! PGN parser or general FEN canonicalizer is implemented here.
+//! named module owns one concept and its usage scenarios. For standard chess
+//! positions and repertoire PGNs, start with the two concrete import adapters.
 
 mod catalog;
 mod change_kind;
@@ -30,10 +30,14 @@ mod fixture_parser;
 mod game_comparator;
 mod grading_scheme;
 mod import_request;
+mod learner_color;
+mod pgn_tokens;
 mod plan_import;
 mod position_canonicalizer;
 mod position_key;
 mod repertoire_line;
+mod repertoire_pgn_parser;
+mod standard_position_canonicalizer;
 
 pub use catalog::Catalog;
 pub use change_kind::ChangeKind;
@@ -64,7 +68,10 @@ pub use fixture_parser::FixtureParser;
 pub use game_comparator::GameComparator;
 pub use grading_scheme::GradingScheme;
 pub use import_request::ImportRequest;
+pub use learner_color::LearnerColor;
 pub use plan_import::plan_import;
 pub use position_canonicalizer::PositionCanonicalizer;
 pub use position_key::PositionKey;
 pub use repertoire_line::RepertoireLine;
+pub use repertoire_pgn_parser::RepertoirePgnParser;
+pub use standard_position_canonicalizer::StandardPositionCanonicalizer;

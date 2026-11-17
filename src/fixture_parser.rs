@@ -10,7 +10,8 @@ use std::collections::BTreeMap;
 /// Use this in demos or interface tests that need deterministic parser output
 /// before a real parser exists. `with_fixture` maps exact PGN text to a catalog;
 /// `parse` clones that catalog, adds request provenance, checks optional repertoire
-/// context and validates its structure.
+/// context and validates its structure. Registered catalogs are returned as-is
+/// for the learner color; use the real repertoire parser to select a side.
 ///
 /// Unknown input returns [`ChessError::UnknownFixture`]. This implementation does
 /// not claim to parse arbitrary valid chess text.
@@ -61,6 +62,7 @@ mod tests {
             pgn: REPERTOIRE_PGN.into(),
             source: "test import".into(),
             repertoire: Some("r1".into()),
+            learner_color: None,
         };
         let known = parser.parse(&request).unwrap();
         assert_eq!(known.items.len(), 2);

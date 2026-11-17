@@ -140,6 +140,7 @@ mod tests {
                 pgn: REPERTOIRE_PGN.into(),
                 source: "demo".into(),
                 repertoire: Some("r1".into()),
+                learner_color: None,
             })
             .unwrap();
         assert!(

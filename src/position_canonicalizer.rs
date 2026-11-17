@@ -10,9 +10,8 @@ use crate::{ChessError, PositionKey};
 /// transpositions. The result is a [`PositionKey`], not a rewritten display FEN.
 /// One consistent implementation must define identity for every import path.
 ///
-/// The intended production implementation uses chess rules to handle effective
-/// en-passant rights and castling while excluding move counters. Current
-/// [`crate::FixtureCanonicalizer`] entries only demonstrate the interface.
+/// [`crate::StandardPositionCanonicalizer`] uses chess rules to handle effective
+/// en-passant rights and castling while excluding move counters.
 pub trait PositionCanonicalizer {
     fn canonicalize(&self, fen: &str) -> Result<PositionKey, ChessError>;
 }
