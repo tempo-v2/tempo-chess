@@ -1,9 +1,8 @@
 use super::*;
 use std::convert::Infallible;
-use tempo_study::{
-    AttemptStatus, Availability, Exercise, GradingError, QuestionSource, StudyError,
-};
-use tempo_types::{ContentVersion, Grade, Revision, TargetId};
+use tempo_study::{Availability, Exercise, QuestionSource, next_available_exercise_if_any};
+use tempo_types::{ContentVersion, Revision, TargetId};
+
 struct Source(Option<Exercise<ChessDefinition>>);
 impl QuestionSource for Source {
     type Definition = ChessDefinition;
@@ -20,7 +19,7 @@ fn tactic() -> (ChessDefinition, ChessAttempt) {
     let catalog = demo_catalog();
     let exercise = catalog.items[&TargetId::from("t1")].exercise();
     let definition = exercise.definition.clone();
-    let Availability::Ready(started) = tempo_study::next(
+    let Availability::Ready(started) = next_available_exercise_if_any(
         &mut Source(Some(exercise)),
         &ExactSequenceGrader,
         "dataset".into(),

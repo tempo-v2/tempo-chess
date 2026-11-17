@@ -1,7 +1,7 @@
+use tempo_study::{GradeStep, Grader, GraderStart, GradingError};
+
 use crate::model::valid_uci;
 use crate::{ChessAnswer, ChessDefinition, ChessFeedback, ChessPrompt, ChessState};
-use tempo_study::{GradeStep, Grader, GraderStart, GradingError};
-use tempo_types::Grade;
 
 /// Matches prescribed UCI moves. It does not prove legality or objective chess quality.
 #[derive(Clone, Copy, Debug, Default)]
