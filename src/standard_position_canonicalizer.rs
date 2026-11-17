@@ -1,7 +1,7 @@
 //! Position identity for orthodox chess, shared with repertoire import.
 
 use crate::{ChessError, PositionCanonicalizer, PositionKey};
-use cozy_chess::{Board, Color, File, Move, Piece, Rank, Square, get_pawn_attacks};
+use cozy_chess::{Board, Color, File, Move, Piece, Rank, Square, get_king_moves, get_pawn_attacks};
 
 /// Canonicalize standard chess FEN using the legal moves of the position.
 /// Use this when assigning or comparing repertoire targets. The result has the
@@ -35,7 +35,20 @@ impl PositionCanonicalizer for StandardPositionCanonicalizer {
                 ));
             }
         }
-        Ok(board_key(&board))
+        if get_king_moves(board.king(Color::White)).has(board.king(Color::Black)) {
+            return Err(ChessError::InvalidContent(
+                "kings cannot be adjacent".into(),
+            ));
+        }
+        let key = board_key(&board);
+        // The reader accepts some nonstandard placement spellings. Its writer
+        // emits exactly eight ranks with a single digit for each empty run.
+        if key.0.split_ascii_whitespace().next() != Some(*pieces) {
+            return Err(ChessError::InvalidContent(
+                "invalid FEN piece placement".into(),
+            ));
+        }
+        Ok(key)
     }
 }
 
@@ -92,6 +105,10 @@ mod tests {
         for invalid in [
             "bogus",
             "8/8/8/8/8/8/8/8 w - - 0 1",
+            "8/8/8/8/4k3/8/4K3 w - - 0 1",
+            "8/8/8/8/8/4k3/8/04K3 w - - 0 1",
+            "44/8/8/8/8/4k3/8/4K3 w - - 0 1",
+            "8/8/8/8/8/8/4k3/4K3 w - - 0 1",
             &START_FEN.replace("0 1", "0 0"),
         ] {
             assert!(matches!(
