@@ -158,4 +158,16 @@ mod tests {
         assert!(compile_tactics(&[record("c", START_FEN, &[])]).is_err());
         assert!(compile_tactics(&[record("c", "8/8/8/8/8/8/8/8 w - - 0 1", &["a2a3"])]).is_err());
     }
+    #[test]
+    fn callers_cannot_forge_a_source_identity_through_provenance() {
+        let owner = record("owner", START_FEN, &["e2e4"]);
+        let mut copy = record("copy", START_FEN, &["d2d4"]);
+        copy.provenance.push(owner.target_id().0);
+        assert!(
+            compile_tactics(&[owner, copy])
+                .unwrap_err()
+                .to_string()
+                .contains("reserved tactic source token")
+        );
+    }
 }

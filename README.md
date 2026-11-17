@@ -154,8 +154,10 @@ This is also a reserved provenance token. After `plan_import`, find the
 retained target by that token. Identical lines merge into a retained target,
 while competing lines at one practice start are quarantined. The planner
 checks retained aliases against the original practice start before matching
-other definitions. A revised alias can get its own target at the same start
-and enter quarantine with the conflicting line.
+other definitions. If a primary changes, an omitted alias keeps its prior line.
+It can receive its own target and enter quarantine with the conflicting primary.
+If aliases and the primary move to one equal definition in the same batch, they
+remain merged under the original primary and its new version.
 
 Use `LegalSequenceGrader` in the real runtime, passing the learner's standard
 UCI answer to Study. Malformed and illegal moves return an input error. Legal

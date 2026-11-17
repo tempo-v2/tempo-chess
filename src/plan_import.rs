@@ -55,11 +55,45 @@ pub fn plan_import(current: &Catalog, incoming: &Catalog) -> Result<ContentPlan,
             return Err(ChessError::IdentityChanged(item.target.clone()));
         }
     }
+    let mut updates: Vec<_> = incoming.items.values().cloned().collect();
+    for (token, owner) in &sources {
+        let alias = TargetId((*token).into());
+        if alias == **owner || incoming.items.contains_key(&alias) {
+            continue;
+        }
+        let old = &current.items[*owner];
+        if incoming
+            .items
+            .get(*owner)
+            .is_some_and(|edited| edited.definition != old.definition)
+        {
+            // The primary is changing, but this source still owns its old
+            // line. Preserve that line as an explicit import candidate.
+            let mut retained = old.clone();
+            retained
+                .provenance
+                .retain(|value| !is_source_token(value) || value == *token);
+            retained.target = alias;
+            updates.push(retained);
+        }
+    }
+    // Apply primary edits before resolving any aliases against the proposal.
+    // Resolve established aliases before giving any new source a target.
+    updates.sort_by_cached_key(|item| {
+        let rank = if current.items.contains_key(&item.target) {
+            0
+        } else if sources.contains_key(item.target.0.as_str()) {
+            1
+        } else {
+            2
+        };
+        (rank, item.target.clone())
+    });
     let mut catalog = current.clone();
     let mut changes = Vec::new();
-    for original in incoming.items.values() {
-        let mut item = original.clone();
-        let previous_owner = sources.get(original.target.0.as_str()).copied();
+    for mut item in updates {
+        let source = item.target.clone();
+        let previous_owner = sources.get(source.0.as_str()).copied();
         // Preserve named targets with their own learning history. For an alias,
         // prefer its prior owner while it still defines the same exercise.
         if !item.definition.is_repertoire() && !catalog.items.contains_key(&item.target) {
@@ -78,9 +112,7 @@ pub fn plan_import(current: &Catalog, incoming: &Catalog) -> Result<ContentPlan,
             // A revised alias now has its own definition (or matches a third
             // target). Move its identity token; preserve retained provenance.
             let previous = catalog.items.get_mut(owner).expect("retained owner");
-            previous
-                .provenance
-                .retain(|token| *token != original.target.0);
+            previous.provenance.retain(|token| *token != source.0);
             changes.push(ContentChange {
                 target: owner.clone(),
                 kind: ChangeKind::Metadata,
@@ -309,5 +341,85 @@ mod tests {
         for id in [a.target_id(), b.target_id()] {
             assert_eq!(split.catalog.items[&id].status, ContentStatus::Quarantined);
         }
+    }
+    #[test]
+    fn editing_a_primary_preserves_omitted_and_explicitly_unchanged_aliases() {
+        use crate::{START_FEN, TacticRecord, compile_tactics};
+
+        let primary = TacticRecord {
+            namespace: "synthetic".into(),
+            source_id: "z".into(),
+            solver_fen: START_FEN.into(),
+            solution: vec!["e2e4".into()],
+            label: "Retained primary".into(),
+            provenance: vec!["original source".into()],
+        };
+        let alias = TacticRecord {
+            source_id: "a".into(),
+            label: "Alias".into(),
+            ..primary.clone()
+        };
+        // Use a primary that sorts after its alias to expose order dependence.
+        let current = compile_tactics(std::slice::from_ref(&primary)).unwrap();
+        let alias_input = compile_tactics(std::slice::from_ref(&alias)).unwrap();
+        let merged = plan_import(&current, &alias_input).unwrap().catalog;
+        let primary_id = primary.target_id();
+        let alias_id = alias.target_id();
+        let old = &merged.items[&primary_id];
+        assert!(old.provenance.contains(&alias_id.0));
+
+        let revised = TacticRecord {
+            solution: vec!["d2d4".into()],
+            ..primary
+        };
+        let omitted = compile_tactics(std::slice::from_ref(&revised)).unwrap();
+        let explicit = compile_tactics(&[alias.clone(), revised.clone()]).unwrap();
+        let split = plan_import(&merged, &omitted).unwrap();
+        let mut explicit_catalog = plan_import(&merged, &explicit).unwrap().catalog;
+        let explicit_alias = explicit_catalog.items.get_mut(&alias_id).unwrap();
+        assert_eq!(explicit_alias.label, alias.label);
+        // Only an explicitly supplied alias can provide its own label.
+        explicit_alias.label = old.label.clone();
+        assert_eq!(explicit_catalog, split.catalog);
+        let edited = &split.catalog.items[&primary_id];
+        assert_eq!(edited.version, ContentVersion(2));
+        assert_eq!(edited.definition.decisions[0].expected.uci, "d2d4");
+        assert!(!edited.provenance.contains(&alias_id.0));
+        let preserved = &split.catalog.items[&alias_id];
+        assert_eq!(preserved.version, ContentVersion(1));
+        assert_eq!(preserved.definition, old.definition);
+        assert_eq!(preserved.provenance, ["original source", &alias_id.0]);
+        for target in [primary_id.clone(), alias_id.clone()] {
+            assert_eq!(
+                split.catalog.items[&target].status,
+                ContentStatus::Quarantined
+            );
+        }
+        assert!(split.changes.contains(&ContentChange {
+            target: primary_id.clone(),
+            kind: ChangeKind::Semantic,
+        }));
+        assert!(split.changes.contains(&ContentChange {
+            target: alias_id.clone(),
+            kind: ChangeKind::Added,
+        }));
+
+        // Co-editing both sources to the same line should stay merged. The
+        // primary retains version history even when its ID sorts second.
+        let revised_alias = TacticRecord {
+            solution: revised.solution.clone(),
+            ..alias
+        };
+        let coedit = compile_tactics(&[revised_alias, revised]).unwrap();
+        let update = plan_import(&merged, &coedit).unwrap();
+        assert_eq!(update.catalog.items.len(), 1);
+        let edited = &update.catalog.items[&primary_id];
+        assert_eq!(edited.version, ContentVersion(2));
+        assert_eq!(edited.status, ContentStatus::Active);
+        assert!(edited.provenance.contains(&alias_id.0));
+        assert_eq!(
+            plan_import(&update.catalog, &coedit).unwrap().catalog,
+            update.catalog
+        );
     }
 }
