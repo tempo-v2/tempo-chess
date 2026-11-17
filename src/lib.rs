@@ -4,6 +4,7 @@
 //! named module owns one concept and its usage scenarios. For standard chess
 //! positions and repertoire PGNs, start with the two concrete import adapters.
 
+mod apply_setup_move;
 mod catalog;
 mod change_kind;
 mod chess_answer;
@@ -14,6 +15,7 @@ mod chess_feedback;
 mod chess_progress;
 mod chess_prompt;
 mod chess_state;
+mod compile_tactics;
 mod content_change;
 mod content_item;
 mod content_kind;
@@ -31,14 +33,19 @@ mod game_comparator;
 mod grading_scheme;
 mod import_request;
 mod learner_color;
+mod legal_sequence_grader;
 mod pgn_tokens;
 mod plan_import;
 mod position_canonicalizer;
+mod position_display;
 mod position_key;
 mod repertoire_line;
 mod repertoire_pgn_parser;
 mod standard_position_canonicalizer;
+mod standard_uci;
+mod tactic_record;
 
+pub use apply_setup_move::apply_setup_move;
 pub use catalog::Catalog;
 pub use change_kind::ChangeKind;
 pub use chess_answer::ChessAnswer;
@@ -49,6 +56,7 @@ pub use chess_feedback::ChessFeedback;
 pub use chess_progress::ChessProgress;
 pub use chess_prompt::ChessPrompt;
 pub use chess_state::ChessState;
+pub use compile_tactics::compile_tactics;
 pub use content_change::ContentChange;
 pub use content_item::ContentItem;
 pub use content_kind::ContentKind;
@@ -69,9 +77,12 @@ pub use game_comparator::GameComparator;
 pub use grading_scheme::GradingScheme;
 pub use import_request::ImportRequest;
 pub use learner_color::LearnerColor;
+pub use legal_sequence_grader::LegalSequenceGrader;
 pub use plan_import::plan_import;
 pub use position_canonicalizer::PositionCanonicalizer;
+pub use position_display::{PositionDisplay, project_position};
 pub use position_key::PositionKey;
 pub use repertoire_line::RepertoireLine;
 pub use repertoire_pgn_parser::RepertoirePgnParser;
 pub use standard_position_canonicalizer::StandardPositionCanonicalizer;
+pub use tactic_record::TacticRecord;

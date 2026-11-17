@@ -137,3 +137,33 @@ The root [lib.rs](src/lib.rs) is an export index. The longer grader and import
 files keep each algorithm with its behavior scenarios; `demo_fixtures.rs` keeps
 one dataset together. Initial `=0.1.0` dependencies still use the local workspace
 patches until coordinated releases are available.
+
+## Compile and present a tactic
+
+The converter applies the one explicit opponent setup move with
+`apply_setup_move(fen, uci)` for catalog packs. Stored cards already start on
+the learner's turn. Pass the full learner-first UCI line in a `TacticRecord`
+to `compile_tactics(&records)`. The compiler checks all plies on a standard
+board, including a final opponent reply, and builds the existing decisions.
+It normalizes initial move clocks and ineffective en passant for definition
+comparison. The source converter keeps the original FEN and line in its archive.
+
+`TacticRecord::target_id()` returns
+`tactic:<lowercase hex UTF-8 namespace>:<lowercase hex UTF-8 source ID>`.
+This is also a reserved provenance token. After `plan_import`, find the
+retained target by that token. Identical lines merge into a retained target,
+while competing lines at one practice start are quarantined. The planner
+checks retained aliases against the original practice start before matching
+other definitions. A revised alias can get its own target at the same start
+and enter quarantine with the conflicting line.
+
+Use `LegalSequenceGrader` in the real runtime, passing the learner's standard
+UCI answer to Study. Malformed and illegal moves return an input error. Legal
+alternatives follow existing exact-sequence grading and correction.
+`ExactSequenceGrader` remains available to structural fixture callers.
+
+Use `project_position(definition, state, ready)` on the issued version of the
+definition. It returns authoritative FEN, learner orientation, check status
+and all legal standard UCI moves when ready. A locked, incomplete view retains
+its current decision board. A completed view reconstructs the board after the
+last prescribed move and any trailing reply.

@@ -1,5 +1,6 @@
 //! Pure import planning; no learning or storage dependency.
 
+use crate::tactic_record::is_source_token;
 use crate::{
     Catalog, ChangeKind, ChessError, ContentChange, ContentKind, ContentPlan, ContentStatus,
     PositionKey,
@@ -21,19 +22,69 @@ use tempo_types::{ContentVersion, TargetId};
 pub fn plan_import(current: &Catalog, incoming: &Catalog) -> Result<ContentPlan, ChessError> {
     current.validate()?;
     incoming.validate()?;
+    let mut sources = BTreeMap::new();
+    for item in current
+        .items
+        .values()
+        .filter(|item| !item.definition.is_repertoire())
+    {
+        for token in item
+            .provenance
+            .iter()
+            .filter(|token| is_source_token(token))
+        {
+            if sources
+                .insert(token.as_str(), &item.target)
+                .is_some_and(|target| target != &item.target)
+            {
+                return Err(ChessError::InvalidContent(format!(
+                    "tactic source {token} has multiple owners"
+                )));
+            }
+        }
+    }
+    for item in incoming.items.values() {
+        // Check the existing source before comparing definitions. An exact
+        // match under another ID must not mask a changed practice start.
+        let existing = current.items.get(&item.target).or_else(|| {
+            sources
+                .get(item.target.0.as_str())
+                .and_then(|owner| current.items.get(*owner))
+        });
+        if existing.is_some_and(|old| old.definition.kind != item.definition.kind) {
+            return Err(ChessError::IdentityChanged(item.target.clone()));
+        }
+    }
     let mut catalog = current.clone();
     let mut changes = Vec::new();
     for original in incoming.items.values() {
         let mut item = original.clone();
-        // Identical tactic content imported under another source ID adds provenance to its target.
-        if matches!(item.definition.kind, ContentKind::Tactic { .. }) {
-            if let Some(existing) = catalog
-                .items
-                .values()
-                .find(|v| v.definition == item.definition)
-            {
+        let previous_owner = sources.get(original.target.0.as_str()).copied();
+        // Preserve named targets with their own learning history. For an alias,
+        // prefer its prior owner while it still defines the same exercise.
+        if !item.definition.is_repertoire() && !catalog.items.contains_key(&item.target) {
+            let same_definition =
+                |existing: &&crate::ContentItem| existing.definition == item.definition;
+            let exact_match = previous_owner
+                .and_then(|owner| catalog.items.get(owner))
+                .filter(same_definition)
+                .or_else(|| catalog.items.values().find(same_definition));
+            if let Some(existing) = exact_match {
                 item.target = existing.target.clone();
+                item.label = existing.label.clone();
             }
+        }
+        if let Some(owner) = previous_owner.filter(|owner| **owner != item.target) {
+            // A revised alias now has its own definition (or matches a third
+            // target). Move its identity token; preserve retained provenance.
+            let previous = catalog.items.get_mut(owner).expect("retained owner");
+            previous
+                .provenance
+                .retain(|token| *token != original.target.0);
+            changes.push(ContentChange {
+                target: owner.clone(),
+                kind: ChangeKind::Metadata,
+            });
         }
         let kind = if let Some(old) = catalog.items.get(&item.target) {
             if old.definition.kind != item.definition.kind {
@@ -95,7 +146,14 @@ pub fn plan_import(current: &Catalog, incoming: &Catalog) -> Result<ContentPlan,
                 .push(item.target.clone());
         }
     }
-    for targets in starts.values().filter(|v| v.len() > 1) {
+    for targets in starts.values() {
+        let first = &catalog.items[&targets[0]].definition;
+        let conflict = targets[1..]
+            .iter()
+            .any(|target| catalog.items[target].definition != *first);
+        if !conflict {
+            continue;
+        }
         for target in targets {
             let item = catalog
                 .items
@@ -194,5 +252,62 @@ mod tests {
             conflicted.catalog.items[&TargetId::from("r1:p1")].status,
             ContentStatus::Active
         );
+    }
+    #[test]
+    fn retained_aliases_guard_start_identity_and_split_on_conflicting_solutions() {
+        use crate::{START_FEN, TacticRecord, apply_setup_move, compile_tactics};
+
+        let source = |id: &str, fen: &str, uci: &str| TacticRecord {
+            namespace: "synthetic".into(),
+            source_id: id.into(),
+            solver_fen: fen.into(),
+            solution: vec![uci.into()],
+            label: id.into(),
+            provenance: vec![],
+        };
+        let a = source("a", START_FEN, "e2e4");
+        let b = source("b", START_FEN, "e2e4");
+        let other_fen = apply_setup_move(START_FEN, "d2d4").unwrap();
+        let c = source("c", &other_fen, "d7d5");
+        let first = compile_tactics(&[a.clone(), b.clone(), c]).unwrap();
+        let merged = plan_import(&Catalog::default(), &first).unwrap().catalog;
+        assert_eq!(merged.items.len(), 2);
+        assert!(
+            merged.items[&a.target_id()]
+                .provenance
+                .contains(&b.target_id().0)
+        );
+        let repeated = plan_import(&merged, &first).unwrap();
+        assert_eq!(repeated.catalog, merged);
+        assert!(
+            repeated
+                .changes
+                .iter()
+                .all(|change| change.kind == ChangeKind::Unchanged)
+        );
+
+        // The different starting position already exists with this response,
+        // so comparing definitions before source identity would accept it.
+        for source_id in ["a", "b"] {
+            let moved = source(source_id, &other_fen, "d7d5");
+            assert_eq!(
+                plan_import(
+                    &merged,
+                    &compile_tactics(std::slice::from_ref(&moved)).unwrap()
+                ),
+                Err(ChessError::IdentityChanged(moved.target_id())),
+            );
+        }
+        let revised = source("b", START_FEN, "d2d4");
+        let split = plan_import(&merged, &compile_tactics(&[revised]).unwrap()).unwrap();
+        assert_eq!(split.catalog.items.len(), 3);
+        assert!(
+            !split.catalog.items[&a.target_id()]
+                .provenance
+                .contains(&b.target_id().0)
+        );
+        for id in [a.target_id(), b.target_id()] {
+            assert_eq!(split.catalog.items[&id].status, ContentStatus::Quarantined);
+        }
     }
 }

@@ -11,45 +11,53 @@ pub struct StandardPositionCanonicalizer;
 
 impl PositionCanonicalizer for StandardPositionCanonicalizer {
     fn canonicalize(&self, fen: &str) -> Result<PositionKey, ChessError> {
-        let fields = fen.split_ascii_whitespace().take(7).collect::<Vec<_>>();
-        let [pieces, turn, castling, ep, half, full] = fields.as_slice() else {
-            return Err(ChessError::InvalidContent("expected six FEN fields".into()));
-        };
-        if !half.bytes().all(|b| b.is_ascii_digit())
-            || !full.bytes().all(|b| b.is_ascii_digit())
-            || full.bytes().all(|b| b == b'0')
-        {
-            return Err(ChessError::InvalidContent("invalid FEN counters".into()));
-        }
-        // Normalize numeric counters before parsing: the rules library otherwise
-        // limits their range, although they cannot affect the position key.
-        let board = Board::from_fen(&format!("{pieces} {turn} {castling} {ep} 0 1"), false)
-            .map_err(|_| ChessError::InvalidContent("invalid standard chess FEN".into()))?;
-        for side in [Color::White, Color::Black] {
-            let rights = board.castle_rights(side);
-            if (rights.short.is_some() || rights.long.is_some())
-                && board.king(side).file() != File::E
-            {
-                return Err(ChessError::InvalidContent(
-                    "castling rights require an orthodox king square".into(),
-                ));
-            }
-        }
-        if get_king_moves(board.king(Color::White)).has(board.king(Color::Black)) {
-            return Err(ChessError::InvalidContent(
-                "kings cannot be adjacent".into(),
-            ));
-        }
-        let key = board_key(&board);
-        // The reader accepts some nonstandard placement spellings. Its writer
-        // emits exactly eight ranks with a single digit for each empty run.
-        if key.0.split_ascii_whitespace().next() != Some(*pieces) {
-            return Err(ChessError::InvalidContent(
-                "invalid FEN piece placement".into(),
-            ));
-        }
-        Ok(key)
+        parse_position(fen, false).map(|board| board_key(&board))
     }
+}
+
+/// Parse orthodox FEN. Identity ignores clocks, but setup and display preserve them.
+pub(crate) fn parse_position(fen: &str, retain_clocks: bool) -> Result<Board, ChessError> {
+    let fields = fen.split_ascii_whitespace().take(7).collect::<Vec<_>>();
+    let [pieces, turn, castling, ep, half, full] = fields.as_slice() else {
+        return Err(ChessError::InvalidContent("expected six FEN fields".into()));
+    };
+    if !half.bytes().all(|b| b.is_ascii_digit())
+        || !full.bytes().all(|b| b.is_ascii_digit())
+        || full.bytes().all(|b| b == b'0')
+    {
+        return Err(ChessError::InvalidContent("invalid FEN counters".into()));
+    }
+    // The rules library bounds the FEN counters. Ignore the clocks when
+    // calculating identity, where they cannot affect the position key.
+    let clocks = if retain_clocks {
+        format!("{half} {full}")
+    } else {
+        "0 1".into()
+    };
+    let board = Board::from_fen(&format!("{pieces} {turn} {castling} {ep} {clocks}"), false)
+        .map_err(|_| ChessError::InvalidContent("invalid standard chess FEN".into()))?;
+    for side in [Color::White, Color::Black] {
+        let rights = board.castle_rights(side);
+        if (rights.short.is_some() || rights.long.is_some()) && board.king(side).file() != File::E {
+            return Err(ChessError::InvalidContent(
+                "castling rights require an orthodox king square".into(),
+            ));
+        }
+    }
+    if get_king_moves(board.king(Color::White)).has(board.king(Color::Black)) {
+        return Err(ChessError::InvalidContent(
+            "kings cannot be adjacent".into(),
+        ));
+    }
+    let written = board.to_string();
+    // The reader accepts some nonstandard placement spellings. Its writer
+    // emits exactly eight ranks with a single digit for each empty run.
+    if written.split_ascii_whitespace().next() != Some(*pieces) {
+        return Err(ChessError::InvalidContent(
+            "invalid FEN piece placement".into(),
+        ));
+    }
+    Ok(board)
 }
 
 pub(crate) fn board_key(board: &Board) -> PositionKey {
