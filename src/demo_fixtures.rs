@@ -1,3 +1,9 @@
+//! Small, explicit catalogs and registered inputs for application wiring.
+//!
+//! These legal opening positions exercise the interfaces. The multi-decision
+//! fixture is not a claim that the position is a tactical puzzle. The public
+//! helpers remain here because they describe one coherent demo dataset.
+
 use crate::{
     Catalog, ChessDefinition, ContentItem, ContentKind, ContentStatus, Decision, Deviation,
     FixtureCanonicalizer, FixtureComparator, FixtureParser, GradingScheme, PositionKey,
@@ -118,4 +124,35 @@ pub fn demo_comparator() -> FixtureComparator {
             observed_move: "d2d4".into(),
         }],
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ContentParser, GameComparator};
+
+    #[test]
+    fn demo_ports_agree_on_the_same_catalog_targets() {
+        let catalog = demo_catalog();
+        catalog.validate().unwrap();
+        let parsed = demo_parser()
+            .parse(&crate::ImportRequest {
+                pgn: REPERTOIRE_PGN.into(),
+                source: "demo".into(),
+                repertoire: Some("r1".into()),
+            })
+            .unwrap();
+        assert!(
+            parsed
+                .items
+                .keys()
+                .all(|target| catalog.items.contains_key(target))
+        );
+        let deviations = demo_comparator().compare(GAME_PGN, &catalog).unwrap();
+        assert!(
+            deviations
+                .iter()
+                .all(|fact| parsed.items.contains_key(&fact.target))
+        );
+    }
 }

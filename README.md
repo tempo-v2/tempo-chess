@@ -1,63 +1,123 @@
-# tempo-chess
+# Tempo Chess
 
-Typed chess content, prescribed-move grading and pure content-change planning.
-This crate implements Study's grader interface and imports only `tempo-study`
-and `tempo-types` among Tempo crates. It performs no storage or provider I/O.
+Chess owns content identity, repertoire/tactic definitions, prescribed-move
+grading, pure game comparison and import planning. It imports Study's interface
+and the small shared vocabulary. It performs no storage, network or provider I/O.
 
-## Public contract
+## Start with these three concepts
 
-| Interface / value | Responsibility |
-| --- | --- |
-| `ChessDefinition`, `Decision` | Repertoire/tactic identity and ordered learner decisions with separate automatic replies. |
-| `ExactSequenceGrader` | Compare a supplied UCI move with the prescribed move; produce prompt, feedback, next state and optional whole-exercise assessment. |
-| `ContentItem`, `Catalog`, `RepertoireLine` | Versioned content, provenance, active/quarantined status and ordered occurrences sharing target identities. |
-| `ContentParser::parse` | Convert PGN plus source/repertoire context into a proposed catalog. |
-| `PositionCanonicalizer::canonicalize` | Convert a FEN into the domain's canonical position identity. |
-| `GameComparator::compare` | Compare a game with supplied content and return deviation facts. |
-| `plan_import` | Merge proposed content and report added, metadata, semantic, unchanged and quarantine effects. |
+| Concept | What it is | When you reach for it |
+| --- | --- | --- |
+| `Catalog` | The collection of targets and repertoire lines. | Validate an import, resolve a selected target, or compare a game with current content. |
+| `ContentItem` | One stable target, content version, definition and metadata. | Resolve a target into a Study exercise or inspect its provenance/availability. |
+| `ChessDefinition` | The rules and ordered learner decisions needed by a grader. | Start or answer an exercise without handing the grader the whole catalog. |
 
-`ChessDefinition` persists `GradingScheme::ExactSequenceV1`. Unknown serialized
-scheme names are rejected. A future scheme change is a semantic content change;
-it cannot silently reinterpret an old attempt.
+A label edit keeps a target's identity and version. A prescribed-response edit
+keeps its identity but receives a newer content version. An issued attempt
+continues to identify the definition it was issued; the application prevents
+stale work from grading a replacement definition.
 
-Repertoire content has exactly one learner decision for a `(repertoire,
-position)` target. Repeated line occurrences refer to that same target. A tactic
-has one or more learner decisions but one target and assessment. Automatic
-replies are feedback/context, never independent learner grades.
+Every named concept has its own file, a “When to use” explanation and an in-file
+`#[cfg(test)]` usage scenario. The root re-exports are unchanged, so callers can
+continue to write `use tempo_chess::ContentItem`. Small tests demonstrate a
+particular consumer workflow; the sequence and import tests retain the longer
+end-to-end domain behavior.
 
-`plan_import` preserves versions for metadata, increments a target's version
-for a changed answer/sequence, retains provenance, and rejects target identity
-changes. It never receives or changes learning state. Identical tactics add
-provenance; distinct unresolved tactics sharing a practice-start key are
-quarantined together. The application applies any required learning resets and
-commits the entire change atomically.
+## Content navigation
 
-## Real behavior and explicit fixtures
+| Concept | File | Usage scenario in that file |
+| --- | --- | --- |
+| Collection and cross-reference validation | [catalog.rs](src/catalog.rs) | Repeated targets are allowed; a second response target for one repertoire position is rejected. |
+| Stable target and content version | [content_item.rs](src/content_item.rs) | An issued exercise retains version 1 while a changed response produces version 2. |
+| Grader instructions | [chess_definition.rs](src/chess_definition.rs) | Repertoire requires one decision; a tactic can contain the full sequence. |
+| Repertoire versus tactic identity | [content_kind.rs](src/content_kind.rs) | A repertoire question and tactic share a starting board but remain different targets. |
+| Canonical position identity | [position_key.rs](src/position_key.rs) | Resolve a board within one named repertoire. |
+| One learner move plus replies | [decision.rs](src/decision.rs) | Automatic opponent replies do not create additional learner questions or grades. |
+| Ordered repertoire context | [repertoire_line.rs](src/repertoire_line.rs) | Three line occurrences can refer to only two learning targets. |
+| Availability and quarantine | [content_status.rs](src/content_status.rs) | Retain conflicting content for inspection while excluding it from new selection. |
+| Content failures | [chess_error.rs](src/chess_error.rs) | Missing target identity is an explicit comparison error, not a learner grade. |
 
-Real here: typed contracts; ordered prescribed-move grading; first-miss behavior
-through Study; target/line structural checks; semantic content diffing and
-quarantine decisions. Structural move/FEN checks **do not validate chess
-legality** or calculate whether a move is best.
+Repertoire content has one learner decision for each `(repertoire, position)`
+target. Repetitions and transpositions refer to that same target. A tactic has
+one or more learner decisions but one target and whole-exercise assessment.
+A repertoire line groups separate targets; it does not merge their schedules.
 
-`FixtureParser`, `FixtureCanonicalizer` and `FixtureComparator` accept explicitly
-registered inputs and return an error for unknown inputs. They are replacement
-points for a real PGN/chess library and game comparison. They do not silently
-pretend to parse arbitrary input.
+## Grading navigation
 
-`demo_catalog()` contains two repertoire positions and one two-decision exercise
-using legal opening positions. The multi-decision exercise is an interface
-fixture, not a tactical puzzle recommendation. Helpers expose the registered
-PGNs and fixture implementations for the application's demo and integration tests.
+| Concept | File | Usage scenario in that file |
+| --- | --- | --- |
+| Move input | [chess_answer.rs](src/chess_answer.rs) | Package board input as UCI; malformed notation is an input error. |
+| Resumable decision cursor | [chess_state.rs](src/chess_state.rs) | Resume at the remaining decision and reject a cursor beyond completion. |
+| Board/instructions for the UI | [chess_prompt.rs](src/chess_prompt.rs) | Show the next position; completion removes the prompt. |
+| Per-response feedback | [chess_feedback.rs](src/chess_feedback.rs) | A wrong move gives feedback without automatic replies. |
+| Persisted algorithm identity | [grading_scheme.rs](src/grading_scheme.rs) | Select the implementation from a loaded enum, without persisting a callback. |
+| Sequence grading algorithm | [exact_sequence_grader.rs](src/exact_sequence_grader.rs) | Clean completion, a miss on either decision, correction without extra credit, and malformed input. |
+| Concrete Study attempt alias | [chess_attempt.rs](src/chess_attempt.rs) | Generic Study progression retains target and content version. |
+| Result of one submission | [chess_progress.rs](src/chess_progress.rs) | Correct feedback after a miss has no second assessment. |
 
-## Check
+`ChessFeedback.correct` is about one response. `ChessProgress.assessment` is a
+newly emitted whole-attempt outcome. `attempt.terminal` is the outcome retained
+from earlier submissions. Study owns the sticky, at-most-once assessment: use
+`tempo_study::submit` to progress attempts, including correction flows.
+
+The persisted `GradingScheme::ExactSequenceV1` rejects unknown serialized scheme
+names. Future changes to grading semantics are content-version changes rather
+than silent reinterpretations of old attempts.
+
+## Import and game comparison navigation
+
+| Concept | File | Usage scenario in that file |
+| --- | --- | --- |
+| PGN plus source/repertoire context | [import_request.rs](src/import_request.rs) | Reject a mismatched repertoire and retain source provenance. |
+| Parser interface | [content_parser.rs](src/content_parser.rs) | Parse and plan through the trait without a store. |
+| Registered parser substitute | [fixture_parser.rs](src/fixture_parser.rs) | Known PGN works; unknown input explicitly fails. |
+| Position identity interface | [position_canonicalizer.rs](src/position_canonicalizer.rs) | Ask the trait for a key instead of treating raw FEN as identity. |
+| Registered identity substitute | [fixture_canonicalizer.rs](src/fixture_canonicalizer.rs) | Explicitly map two FEN counter variants to one key. |
+| Pure game comparison interface | [game_comparator.rs](src/game_comparator.rs) | Compare a supplied game with an explicit content snapshot. |
+| Registered comparison substitute | [fixture_comparator.rs](src/fixture_comparator.rs) | Validate referenced targets and reject unknown games. |
+| Game feedback fact | [deviation.rs](src/deviation.rs) | Identify the target, move and game location without changing content. |
+| Import algorithm | [plan_import.rs](src/plan_import.rs) | Preserve metadata versions, version changed responses, merge provenance and quarantine conflicting tactics. |
+| Complete import proposal | [content_plan.rs](src/content_plan.rs) | Review a merged catalog while both original inputs remain unchanged. |
+| One target's reported effect | [content_change.rs](src/content_change.rs) | A duplicate source ID maps to the retained target. |
+| Meaning of an import effect | [change_kind.rs](src/change_kind.rs) | Select semantic changes requiring learning resets. |
+| Coherent demo dataset | [demo_fixtures.rs](src/demo_fixtures.rs) | Parser and comparator fixtures refer to the same catalog targets. |
+
+`plan_import` receives no learning state. It produces the content proposal; the
+application prepares any learning resets and commits both atomically. Changes
+can contain more than one entry for a target, for example `Added` followed by
+`Quarantined`. They are not a unique target-to-kind map.
+
+Game comparison returns facts. The application attaches provider/event identity,
+checks dataset/content version, and decides whether to submit external learning
+feedback. It does not route background game I/O through Study.
+
+## Real behavior and explicit limits
+
+Real behavior here includes typed contracts, prescribed-move sequencing,
+structural target/line validation, semantic content changes and quarantine
+planning. Move/FEN shape checks do not validate chess legality or calculate the
+best move. A `PositionKey` is not itself a canonicalizer.
+
+The fixture parser, canonicalizer and comparator accept registered inputs only.
+They are replacement points for a real chess library and PGN/game algorithms.
+`demo_catalog()` uses legal opening positions to exercise the interfaces; its
+two-decision example is not a tactical-puzzle recommendation.
+
+## Run the examples
 
 From the assembled development workspace:
 
 ```sh
 cargo test -p tempo-chess
+cargo test -p tempo-chess content_item::tests
+cargo test -p tempo-chess exact_sequence_grader::tests
+cargo test -p tempo-chess --doc
+cargo doc -p tempo-chess --no-deps --open
+cargo clippy -p tempo-chess --all-targets -- -D warnings
 ```
 
-The public contract is in [src/lib.rs](src/lib.rs). Initial `=0.1.0` Tempo
-dependencies use explicit local workspace patches until coordinated component
-versions are published. Real parser/legality, SQLite constraints and application
-transactions still require their own acceptance evidence when implemented.
+The root [lib.rs](src/lib.rs) is an export index. The longer grader and import
+files keep each algorithm with its behavior scenarios; `demo_fixtures.rs` keeps
+one dataset together. No new crate dependencies or persisted shapes are added
+by this source organization. Initial `=0.1.0` dependencies still use the local
+workspace patches until coordinated releases are available.

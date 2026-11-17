@@ -1,29 +1,23 @@
-use crate::{Catalog, ChessError, ContentKind, ContentStatus, PositionKey};
-use serde::{Deserialize, Serialize};
+//! Pure import planning; no learning or storage dependency.
+
+use crate::{
+    Catalog, ChangeKind, ChessError, ContentChange, ContentKind, ContentPlan, ContentStatus,
+    PositionKey,
+};
 use std::collections::BTreeMap;
 use tempo_types::{ContentVersion, TargetId};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ChangeKind {
-    Added,
-    Metadata,
-    Semantic,
-    Unchanged,
-    Quarantined,
-}
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ContentChange {
-    pub target: TargetId,
-    pub kind: ChangeKind,
-}
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ContentPlan {
-    pub catalog: Catalog,
-    pub changes: Vec<ContentChange>,
-}
-
-/// Proposes a content replacement/import. Learning is deliberately absent from this API.
+/// Merge incoming content into a reviewable, versioned proposal.
+///
+/// # When to use
+///
+/// Call this after parsing and before constructing application writes. Unmentioned
+/// existing targets remain in the result. Metadata preserves versions; changed
+/// definitions increment them. Identical tactics share provenance, and distinct
+/// unresolved tactics with the same start are quarantined together.
+///
+/// Both inputs remain unchanged. The application owns learning resets and atomic
+/// persistence; this function only reports content effects.
 pub fn plan_import(current: &Catalog, incoming: &Catalog) -> Result<ContentPlan, ChessError> {
     current.validate()?;
     incoming.validate()?;
@@ -118,4 +112,87 @@ pub fn plan_import(current: &Catalog, incoming: &Catalog) -> Result<ContentPlan,
     }
     catalog.validate()?;
     Ok(ContentPlan { catalog, changes })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::demo_catalog;
+
+    #[test]
+    fn metadata_preserves_version_while_response_change_versions_only_target() {
+        let current = demo_catalog();
+        let mut incoming = current.clone();
+        incoming
+            .items
+            .get_mut(&TargetId::from("r1:p1"))
+            .unwrap()
+            .label = "Annotation updated".into();
+        let metadata = plan_import(&current, &incoming).unwrap();
+        assert_eq!(
+            metadata.catalog.items[&TargetId::from("r1:p1")].version,
+            ContentVersion(1)
+        );
+        assert!(metadata.changes.contains(&ContentChange {
+            target: "r1:p1".into(),
+            kind: ChangeKind::Metadata
+        }));
+        incoming
+            .items
+            .get_mut(&TargetId::from("r1:p1"))
+            .unwrap()
+            .definition
+            .decisions[0]
+            .expected = "d2d4".into();
+        let semantic = plan_import(&current, &incoming).unwrap();
+        assert_eq!(
+            semantic.catalog.items[&TargetId::from("r1:p1")].version,
+            ContentVersion(2)
+        );
+        assert_eq!(
+            semantic.catalog.items[&TargetId::from("r1:p2")].version,
+            ContentVersion(1)
+        );
+        assert!(semantic.changes.contains(&ContentChange {
+            target: "r1:p1".into(),
+            kind: ChangeKind::Semantic
+        }));
+    }
+
+    #[test]
+    fn duplicate_tactic_adds_provenance_and_distinct_same_start_is_quarantined() {
+        let current = demo_catalog();
+        let mut duplicate = current.items[&TargetId::from("t1")].clone();
+        duplicate.target = "imported-id".into();
+        duplicate.provenance = vec!["another source".into()];
+        let mut incoming = Catalog {
+            items: [(duplicate.target.clone(), duplicate)].into(),
+            lines: vec![],
+        };
+        let merged = plan_import(&current, &incoming).unwrap();
+        assert_eq!(merged.catalog.items.len(), current.items.len());
+        assert!(
+            merged.catalog.items[&TargetId::from("t1")]
+                .provenance
+                .contains(&"another source".into())
+        );
+        let changed = incoming
+            .items
+            .get_mut(&TargetId::from("imported-id"))
+            .unwrap();
+        changed.definition.decisions[1].expected = "f1c4".into();
+        let conflicted = plan_import(&current, &incoming).unwrap();
+        assert_eq!(
+            conflicted.catalog.items[&TargetId::from("t1")].status,
+            ContentStatus::Quarantined
+        );
+        assert_eq!(
+            conflicted.catalog.items[&TargetId::from("imported-id")].status,
+            ContentStatus::Quarantined
+        );
+        assert_eq!(
+            conflicted.catalog.items[&TargetId::from("r1:p1")].status,
+            ContentStatus::Active
+        );
+    }
 }
