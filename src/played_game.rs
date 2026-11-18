@@ -73,7 +73,7 @@ pub fn parse_played_games(pgn: &str) -> Result<Vec<Result<PlayedGame, ChessError
         .collect())
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepertoireObservation {
     pub ply: usize,
     pub target: TargetId,
@@ -150,10 +150,195 @@ pub fn compare_played_game(
     Ok(result)
 }
 
+/// The combined result for one actual decision by the learner.
+#[derive(Debug, PartialEq, Eq)]
+pub enum DecisionAdherence {
+    Matched,
+    Miss {
+        candidates: Vec<RepertoireObservation>,
+    },
+    Uncovered,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct PlayedDecision {
+    pub ply: usize,
+    pub position: PositionKey,
+    pub previous_move: Option<String>,
+    pub observations: Vec<RepertoireObservation>,
+    pub adherence: DecisionAdherence,
+}
+
+/// Compare independently at each canonical position, including positions reached
+/// by transposition. Authored routes disambiguate corrections, not adherence.
+pub fn compare_active_repertoires(
+    game: &PlayedGame,
+    catalog: &Catalog,
+    color: LearnerColor,
+    documents: &BTreeMap<String, String>,
+) -> Result<Vec<PlayedDecision>, ChessError> {
+    let mut coverage = BTreeMap::<_, Vec<_>>::new();
+    for item in catalog.items.values().filter(|item| item.active()) {
+        if let ContentKind::Repertoire {
+            repertoire,
+            position,
+        } = &item.definition.kind
+        {
+            coverage
+                .entry(position)
+                .or_default()
+                .push((repertoire, item));
+        }
+    }
+    let mut routes = BTreeMap::new();
+    for (repertoire, pgn) in documents {
+        let mut edges = Vec::new();
+        for authored in parse_pgn(pgn)? {
+            for route in authored.routes()? {
+                edges.push(
+                    route
+                        .into_iter()
+                        .map(|index| {
+                            let ply = &authored.plies[index];
+                            (board_key(&ply.board), ply.uci.clone())
+                        })
+                        .collect::<Vec<_>>(),
+                );
+            }
+        }
+        routes.insert(repertoire, edges);
+    }
+
+    Ok(game
+        .moves
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, side, _))| *side == color.board_color())
+        .map(|(index, (position, _, played))| {
+            let covered = coverage.get(position).map_or(&[][..], Vec::as_slice);
+            let observations: Vec<_> = covered
+                .iter()
+                .map(|(_, item)| RepertoireObservation {
+                    ply: index + 1,
+                    target: item.target.clone(),
+                    version: item.version,
+                    played: played.clone(),
+                    prescribed: item.definition.decisions[0].expected.uci.clone(),
+                })
+                .collect();
+            let adherence = if covered.is_empty() {
+                DecisionAdherence::Uncovered
+            } else if observations
+                .iter()
+                .any(|observation| observation.played == observation.prescribed)
+            {
+                DecisionAdherence::Matched
+            } else {
+                let distances: Vec<_> = covered
+                    .iter()
+                    .map(|(repertoire, _)| {
+                        routes.get(repertoire).map(|lines| {
+                            lines
+                                .iter()
+                                .flat_map(|line| {
+                                    line.iter()
+                                        .enumerate()
+                                        .filter(|(_, (key, _))| key == position)
+                                        .map(|(end, _)| {
+                                            line[..end]
+                                                .iter()
+                                                .rev()
+                                                .zip(game.moves[..index].iter().rev())
+                                                .take_while(|((key, uci), (actual, _, played))| {
+                                                    key == actual && uci == played
+                                                })
+                                                .count()
+                                        })
+                                })
+                                .max()
+                                .unwrap_or(0)
+                        })
+                    })
+                    .collect();
+                let best = distances.iter().flatten().copied().max().unwrap_or(0);
+                let candidates = observations
+                    .iter()
+                    .zip(distances)
+                    .filter(|(_, score)| score.is_none_or(|value| value == best))
+                    .map(|(observation, _)| observation.clone())
+                    .collect();
+                DecisionAdherence::Miss { candidates }
+            };
+            PlayedDecision {
+                ply: index + 1,
+                position: position.clone(),
+                previous_move: index
+                    .checked_sub(1)
+                    .map(|previous| game.moves[previous].2.clone()),
+                observations,
+                adherence,
+            }
+        })
+        .collect())
+}
+
+/// Count opposing moves that disagree with all verified authored branches
+/// covering the position. Unknown branches do not establish disagreement.
+pub fn opponent_deviations(
+    game: &PlayedGame,
+    color: LearnerColor,
+    documents: &BTreeMap<String, String>,
+) -> Result<usize, ChessError> {
+    let mut replies = BTreeMap::<PositionKey, BTreeSet<String>>::new();
+    for pgn in documents.values() {
+        for authored in parse_pgn(pgn)? {
+            for ply in authored.plies {
+                if ply.board.side_to_move() != color.board_color() {
+                    replies
+                        .entry(board_key(&ply.board))
+                        .or_default()
+                        .insert(ply.uci);
+                }
+            }
+        }
+    }
+    Ok(game
+        .moves
+        .iter()
+        .filter(|(position, side, played)| {
+            *side != color.board_color()
+                && replies
+                    .get(position)
+                    .is_some_and(|moves| !moves.contains(played))
+        })
+        .count())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::compile_repertoire;
+
+    #[test]
+    fn canonical_transposition_matches_even_after_uncovered_moves() {
+        let book = "1. Nf3 Nf6 2. g3 g6 3. Bg2 *";
+        let catalog =
+            compile_repertoire(book, "book", "Book", LearnerColor::White, "source").unwrap();
+        let game = parse_played_games("1. g3 g6 2. Nf3 Nf6 3. Bg2 1-0")
+            .unwrap()
+            .pop()
+            .unwrap()
+            .unwrap();
+        let decisions = compare_active_repertoires(
+            &game,
+            &catalog,
+            LearnerColor::White,
+            &BTreeMap::from([("book".into(), book.into())]),
+        )
+        .unwrap();
+        assert_eq!(decisions[1].adherence, DecisionAdherence::Uncovered);
+        assert_eq!(decisions[2].adherence, DecisionAdherence::Matched);
+    }
 
     #[test]
     fn compares_repeated_and_transposed_positions_within_selected_repertoire() {

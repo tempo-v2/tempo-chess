@@ -33,8 +33,8 @@ mod fixture_parser;
 mod game_comparator;
 mod played_game;
 pub use played_game::{
-    PlayedGame, RepertoireComparison, RepertoireObservation, compare_played_game,
-    parse_played_games,
+    DecisionAdherence, PlayedDecision, PlayedGame, RepertoireComparison, RepertoireObservation,
+    compare_active_repertoires, compare_played_game, opponent_deviations, parse_played_games,
 };
 mod grading_scheme;
 mod import_request;
