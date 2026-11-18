@@ -31,6 +31,11 @@ mod fixture_canonicalizer;
 mod fixture_comparator;
 mod fixture_parser;
 mod game_comparator;
+mod played_game;
+pub use played_game::{
+    PlayedGame, RepertoireComparison, RepertoireObservation, compare_played_game,
+    parse_played_games,
+};
 mod grading_scheme;
 mod import_request;
 mod learner_color;

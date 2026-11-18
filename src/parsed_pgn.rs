@@ -27,6 +27,7 @@ pub(super) struct PgnGame<'a> {
     pub tags: BTreeMap<&'a str, &'a str>,
     pub result: &'a str,
     roots: Vec<usize>,
+    pub(super) mainline: Vec<usize>,
     pub plies: Vec<PgnPly>,
 }
 
@@ -154,6 +155,7 @@ fn parse_game<'a>(mut tokens: impl Iterator<Item = Token<'a>>) -> Result<PgnGame
         tags: BTreeMap::new(),
         result: "",
         roots: Vec::new(),
+        mainline: Vec::new(),
         plies: Vec::new(),
     };
     let mut token = next_required(&mut tokens)?;
@@ -242,6 +244,9 @@ fn parse_line<'a>(
                     previous,
                     next: Vec::new(),
                 });
+                if depth == 0 {
+                    game.mainline.push(index);
+                }
                 // parse_san_move selects from the board's legal moves.
                 board.play_unchecked(mv);
                 last = Some(index);
