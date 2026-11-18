@@ -7,8 +7,6 @@ use cozy_chess::util::{display_san_move, display_uci_move, parse_san_move};
 use cozy_chess::{Board, Color, Move};
 use std::collections::BTreeMap;
 
-pub(super) const MAX_BYTES: usize = 256 * 1024;
-pub(super) const MAX_GAMES: usize = 32;
 pub(super) const MAX_PLIES: usize = 512;
 const MAX_DEPTH: usize = 24;
 const MAX_ROUTE_PLIES: usize = 32_768;
@@ -89,9 +87,6 @@ pub(super) fn parse_pgn(input: &str) -> Result<Vec<PgnGame<'_>>, ChessError> {
 pub(super) fn parse_pgn_records(
     input: &str,
 ) -> Result<Vec<Result<PgnGame<'_>, ChessError>>, ChessError> {
-    if input.len() > MAX_BYTES {
-        return Err(invalid("PGN exceeds 256 KiB"));
-    }
     let mut games = Vec::new();
     let mut lexer = PgnTokens::new(input);
     let mut record = PgnRecord::default();
@@ -101,7 +96,7 @@ pub(super) fn parse_pgn_records(
                 // A header after movetext is the next record, even if the
                 // previous record omitted its result marker.
                 if matches!(token, Token::Tag(..)) && record.movetext {
-                    record.finish(&mut games)?;
+                    record.finish(&mut games);
                 }
                 match token {
                     Token::VariationStart => record.depth += 1,
@@ -112,7 +107,7 @@ pub(super) fn parse_pgn_records(
                 record.movetext |= !matches!(token, Token::Tag(..) | Token::Comment(_));
                 record.tokens.push(token);
                 if ended {
-                    record.finish(&mut games)?;
+                    record.finish(&mut games);
                 }
             }
             Err(error) => {
@@ -121,7 +116,7 @@ pub(super) fn parse_pgn_records(
             Ok(None) => break,
         }
     }
-    record.finish(&mut games)?;
+    record.finish(&mut games);
     if games.is_empty() {
         return Err(invalid("PGN contains no games"));
     }
@@ -137,10 +132,7 @@ struct PgnRecord<'a> {
 }
 
 impl<'a> PgnRecord<'a> {
-    fn finish(
-        &mut self,
-        games: &mut Vec<Result<PgnGame<'a>, ChessError>>,
-    ) -> Result<(), ChessError> {
+    fn finish(&mut self, games: &mut Vec<Result<PgnGame<'a>, ChessError>>) {
         let record = std::mem::take(self);
         if record.error.is_none()
             && record
@@ -148,16 +140,12 @@ impl<'a> PgnRecord<'a> {
                 .iter()
                 .all(|token| matches!(token, Token::Comment(_)))
         {
-            return Ok(());
-        }
-        if games.len() == MAX_GAMES {
-            return Err(invalid("PGN exceeds 32 games"));
+            return;
         }
         games.push(match record.error {
             Some(error) => Err(error),
             None => parse_game(record.tokens.into_iter()),
         });
-        Ok(())
     }
 }
 
