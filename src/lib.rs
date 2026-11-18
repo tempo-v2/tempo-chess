@@ -39,6 +39,7 @@ mod parsed_pgn;
 mod pgn_tokens;
 mod plan_import;
 mod plan_repertoire_replacement;
+mod plan_tactic_capture;
 mod position_canonicalizer;
 mod position_display;
 mod position_key;
@@ -47,6 +48,7 @@ mod repertoire_line;
 mod repertoire_pgn_parser;
 mod standard_position_canonicalizer;
 mod standard_uci;
+mod tactic_pgn;
 mod tactic_record;
 
 pub use apply_setup_move::apply_setup_move;
@@ -85,6 +87,7 @@ pub use learner_color::LearnerColor;
 pub use legal_sequence_grader::LegalSequenceGrader;
 pub use plan_import::plan_import;
 pub use plan_repertoire_replacement::plan_repertoire_replacement;
+pub use plan_tactic_capture::{TacticCapturePlan, plan_tactic_capture};
 pub use position_canonicalizer::PositionCanonicalizer;
 pub use position_display::{PositionDisplay, project_position};
 pub use position_key::PositionKey;
@@ -92,4 +95,8 @@ pub use repertoire_lesson::RepertoireLesson;
 pub use repertoire_line::RepertoireLine;
 pub use repertoire_pgn_parser::RepertoirePgnParser;
 pub use standard_position_canonicalizer::StandardPositionCanonicalizer;
+pub use tactic_pgn::{
+    TacticPgnMove, TacticPgnPreview, TacticPgnRoute, TacticPgnRow, TacticPgnSelection,
+    TacticPgnStatus, preview_tactic_pgn,
+};
 pub use tactic_record::TacticRecord;

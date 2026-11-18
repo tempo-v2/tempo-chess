@@ -4,7 +4,7 @@ use crate::ChessError;
 use crate::pgn_tokens::{PgnTokens, Token, is_result};
 use crate::standard_position_canonicalizer::parse_position;
 use cozy_chess::util::{display_san_move, display_uci_move, parse_san_move};
-use cozy_chess::{Board, Color};
+use cozy_chess::{Board, Color, Move};
 use std::collections::BTreeMap;
 
 pub(super) const MAX_BYTES: usize = 256 * 1024;
@@ -18,6 +18,7 @@ pub(super) struct PgnPly {
     pub board: Board,
     pub san: String,
     pub uci: String,
+    pub mv: Move,
     pub comments: Vec<String>,
     pub previous: Option<usize>,
     next: Vec<usize>,
@@ -26,6 +27,7 @@ pub(super) struct PgnPly {
 #[derive(Debug)]
 pub(super) struct PgnGame<'a> {
     pub tags: BTreeMap<&'a str, &'a str>,
+    pub result: &'a str,
     roots: Vec<usize>,
     pub plies: Vec<PgnPly>,
 }
@@ -73,45 +75,101 @@ impl PgnGame<'_> {
 }
 
 pub(super) fn parse_pgn(input: &str) -> Result<Vec<PgnGame<'_>>, ChessError> {
+    parse_pgn_records(input)?
+        .into_iter()
+        .enumerate()
+        .map(|(index, game)| {
+            game.map_err(|error| invalid(format!("PGN game {}: {error}", index + 1)))
+        })
+        .collect()
+}
+
+/// Frame records before validating their moves, allowing one malformed game to
+/// have a diagnostic without hiding subsequent independently framed games.
+pub(super) fn parse_pgn_records(
+    input: &str,
+) -> Result<Vec<Result<PgnGame<'_>, ChessError>>, ChessError> {
     if input.len() > MAX_BYTES {
         return Err(invalid("PGN exceeds 256 KiB"));
     }
     let mut games = Vec::new();
-    let mut tokens = PgnTokens::new(input);
-    let mut comments = Vec::new();
-    while let Some(first) = tokens.next()? {
-        if let Token::Comment(comment) = first {
-            if !comment.is_empty() {
-                comments.push(comment.to_owned());
+    let mut lexer = PgnTokens::new(input);
+    let mut record = PgnRecord::default();
+    loop {
+        match lexer.next() {
+            Ok(Some(token)) => {
+                // A header after movetext is the next record, even if the
+                // previous record omitted its result marker.
+                if matches!(token, Token::Tag(..)) && record.movetext {
+                    record.finish(&mut games)?;
+                }
+                match token {
+                    Token::VariationStart => record.depth += 1,
+                    Token::VariationEnd => record.depth = record.depth.saturating_sub(1),
+                    _ => {}
+                }
+                let ended = matches!(token, Token::Result(_)) && record.depth == 0;
+                record.movetext |= !matches!(token, Token::Tag(..) | Token::Comment(_));
+                record.tokens.push(token);
+                if ended {
+                    record.finish(&mut games)?;
+                }
             }
-            continue;
+            Err(error) => {
+                record.error.get_or_insert(error);
+            }
+            Ok(None) => break,
         }
-        if games.len() == MAX_GAMES {
-            return Err(invalid("PGN exceeds 32 games"));
-        }
-        let number = games.len() + 1;
-        games.push(
-            parse_game(first, &mut tokens, std::mem::take(&mut comments))
-                .map_err(|error| invalid(format!("PGN game {number}: {error}")))?,
-        );
     }
+    record.finish(&mut games)?;
     if games.is_empty() {
         return Err(invalid("PGN contains no games"));
     }
     Ok(games)
 }
 
-fn parse_game<'a>(
-    first: Token<'a>,
-    tokens: &mut PgnTokens<'a>,
-    mut comments: Vec<String>,
-) -> Result<PgnGame<'a>, ChessError> {
+#[derive(Default)]
+struct PgnRecord<'a> {
+    tokens: Vec<Token<'a>>,
+    error: Option<ChessError>,
+    movetext: bool,
+    depth: usize,
+}
+
+impl<'a> PgnRecord<'a> {
+    fn finish(
+        &mut self,
+        games: &mut Vec<Result<PgnGame<'a>, ChessError>>,
+    ) -> Result<(), ChessError> {
+        let record = std::mem::take(self);
+        if record.error.is_none()
+            && record
+                .tokens
+                .iter()
+                .all(|token| matches!(token, Token::Comment(_)))
+        {
+            return Ok(());
+        }
+        if games.len() == MAX_GAMES {
+            return Err(invalid("PGN exceeds 32 games"));
+        }
+        games.push(match record.error {
+            Some(error) => Err(error),
+            None => parse_game(record.tokens.into_iter()),
+        });
+        Ok(())
+    }
+}
+
+fn parse_game<'a>(mut tokens: impl Iterator<Item = Token<'a>>) -> Result<PgnGame<'a>, ChessError> {
     let mut game = PgnGame {
         tags: BTreeMap::new(),
+        result: "",
         roots: Vec::new(),
         plies: Vec::new(),
     };
-    let mut token = first;
+    let mut token = next_required(&mut tokens)?;
+    let mut comments = Vec::new();
     loop {
         match token {
             Token::Tag(name, value) => {
@@ -123,7 +181,7 @@ fn parse_game<'a>(
             Token::Comment(_) => {}
             _ => break,
         }
-        token = next_required(tokens)?;
+        token = next_required(&mut tokens)?;
     }
     if game
         .tags
@@ -142,7 +200,7 @@ fn parse_game<'a>(
         (None | Some("0"), None) => Board::default(),
         _ => return Err(invalid("PGN SetUp and FEN tags are inconsistent")),
     };
-    parse_line(&mut game, tokens, token, None, board, 0, comments)?;
+    parse_line(&mut game, &mut tokens, token, None, board, 0, comments)?;
     if game.plies.is_empty() {
         return Err(invalid("PGN game contains no moves"));
     }
@@ -151,7 +209,7 @@ fn parse_game<'a>(
 
 fn parse_line<'a>(
     game: &mut PgnGame<'a>,
-    tokens: &mut PgnTokens<'a>,
+    tokens: &mut impl Iterator<Item = Token<'a>>,
     mut token: Token<'a>,
     mut previous: Option<usize>,
     mut board: Board,
@@ -191,6 +249,7 @@ fn parse_line<'a>(
                     board: board.clone(),
                     san: san.to_owned(),
                     uci: display_uci_move(&board, mv).to_string(),
+                    mv,
                     comments: std::mem::take(&mut comments),
                     previous,
                     next: Vec::new(),
@@ -243,6 +302,7 @@ fn parse_line<'a>(
                 {
                     return Err(invalid("PGN result does not match the game"));
                 }
+                game.result = result;
                 return Ok(());
             }
         }
@@ -250,9 +310,11 @@ fn parse_line<'a>(
     }
 }
 
-fn next_required<'a>(tokens: &mut PgnTokens<'a>) -> Result<Token<'a>, ChessError> {
+fn next_required<'a>(
+    tokens: &mut impl Iterator<Item = Token<'a>>,
+) -> Result<Token<'a>, ChessError> {
     tokens
-        .next()?
+        .next()
         .ok_or_else(|| invalid("PGN game requires a result marker and closed variations"))
 }
 

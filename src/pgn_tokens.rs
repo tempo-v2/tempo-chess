@@ -30,9 +30,10 @@ impl<'a> PgnTokens<'a> {
             match self.rest.as_bytes().first() {
                 None => return Ok(None),
                 Some(b'{') => {
-                    let (comment, rest) = self.rest[1..]
-                        .split_once('}')
-                        .ok_or_else(|| invalid("unclosed PGN comment"))?;
+                    let Some((comment, rest)) = self.rest[1..].split_once('}') else {
+                        self.rest = "";
+                        return Err(invalid("unclosed PGN comment"));
+                    };
                     self.rest = rest;
                     return Ok(Some(Token::Comment(comment.trim())));
                 }
@@ -55,9 +56,18 @@ impl<'a> PgnTokens<'a> {
                     return Ok(Some(Token::VariationEnd));
                 }
                 Some(b'}' | b']') => {
+                    self.rest = &self.rest[1..];
                     return Err(invalid("unexpected PGN closing delimiter"));
                 }
-                Some(b'[') => return self.tag().map(Some),
+                Some(b'[') => {
+                    return self.tag().map(Some).inspect_err(|_| {
+                        // Tag strings cannot cross a line. Recover at the next line.
+                        self.rest = self
+                            .rest
+                            .find(['\n', '\r'])
+                            .map_or("", |end| &self.rest[end..]);
+                    });
+                }
                 Some(b'$') => {
                     self.rest = &self.rest[1..];
                     let count = self.rest.bytes().take_while(u8::is_ascii_digit).count();
@@ -67,7 +77,9 @@ impl<'a> PgnTokens<'a> {
                     self.rest = &self.rest[count..];
                 }
                 Some(_) => {
-                    if let Some(token) = self.move_number()? {
+                    if let Some(token) = self.move_number().inspect_err(|_| {
+                        self.take_word();
+                    })? {
                         return Ok(Some(token));
                     }
                     let word = self.take_word();

@@ -140,6 +140,18 @@ patches until coordinated releases are available.
 
 ## Compile and present a tactic
 
+Use `preview_tactic_pgn` for pasted or uploaded PGN. A FEN snippet starts on
+the solver's turn by default. `TempoSetupPlies` is an optional Tempo tag with
+value `0` or `1`, and an explicit preview choice overrides it. Ordinary
+`SetUp` specifies a FEN start. `PuzzleID` is label metadata. Games require
+a selected route and solver-first segment. The preview includes failed records
+and legal route boards for selection. Submit only selected valid record indices.
+
+An optional `TempoSource` and `TempoSourceId` pair identifies an authoritative
+source. `plan_tactic_capture` rejects collisions on that pair and matches exact
+tactics by the canonical board and complete solution, including final replies.
+Separate solutions at the same board remain available.
+
 The converter applies the one explicit opponent setup move with
 `apply_setup_move(fen, uci)` for catalog packs. Stored cards already start on
 the learner's turn. Pass the full learner-first UCI line in a `TacticRecord`

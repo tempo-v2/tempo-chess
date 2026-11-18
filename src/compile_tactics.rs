@@ -7,6 +7,7 @@ use crate::{
     Catalog, ChessDefinition, ChessError, ContentItem, ContentKind, ContentStatus, Decision,
     GradingScheme, TacticRecord,
 };
+use cozy_chess::Move;
 use std::collections::BTreeSet;
 use tempo_types::ContentVersion;
 
@@ -26,14 +27,26 @@ pub fn compile_tactics(records: &[TacticRecord]) -> Result<Catalog, ChessError> 
     }
     let mut catalog = Catalog::default();
     for record in records {
-        let item = compile_record(record)?;
+        let item = compile_record(record, None)?;
         catalog.items.insert(item.target.clone(), item);
     }
     catalog.validate()?;
     Ok(catalog)
 }
 
-fn compile_record(record: &TacticRecord) -> Result<ContentItem, ChessError> {
+/// The shared parser already resolved each move legally on the same position.
+pub(super) fn compile_pgn_tactic(
+    record: &TacticRecord,
+    legal: &[Move],
+) -> Result<ContentItem, ChessError> {
+    debug_assert_eq!(legal.len(), record.solution.len());
+    compile_record(record, Some(legal))
+}
+
+fn compile_record(
+    record: &TacticRecord,
+    legal: Option<&[Move]>,
+) -> Result<ContentItem, ChessError> {
     if record.solution.is_empty() {
         return Err(invalid(record, "missing learner move"));
     }
@@ -56,10 +69,13 @@ fn compile_record(record: &TacticRecord) -> Result<ContentItem, ChessError> {
             autoplay: Vec::new(),
         };
         for (offset, uci) in pair.iter().enumerate() {
-            let ply = index * 2 + offset + 1;
-            let mv = legal_move(&board, uci)
-                .map_err(|error| invalid(record, format!("ply {ply}: {error}")))?;
-            board.play(mv);
+            let ply = index * 2 + offset;
+            let mv = match legal {
+                Some(known) => known[ply],
+                None => legal_move(&board, uci)
+                    .map_err(|error| invalid(record, format!("ply {}: {error}", ply + 1)))?,
+            };
+            board.play_unchecked(mv);
         }
         decision
             .autoplay
