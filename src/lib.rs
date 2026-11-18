@@ -42,6 +42,8 @@ mod plan_repertoire_replacement;
 mod plan_tactic_capture;
 mod position_canonicalizer;
 mod position_display;
+mod revealed_line;
+pub use revealed_line::{RevealedLine, RevealedMove, revealed_line};
 mod position_key;
 mod repertoire_lesson;
 mod repertoire_line;

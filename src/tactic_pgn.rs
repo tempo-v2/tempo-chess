@@ -3,8 +3,11 @@
 use crate::compile_tactics::compile_pgn_tactic;
 use crate::parsed_pgn::{PgnGame, invalid, parse_pgn_records};
 use crate::plan_tactic_capture::plan_tactic_items;
+use crate::revealed_line::numbered_san;
 use crate::standard_position_canonicalizer::board_key;
-use crate::{Catalog, ChessError, ContentItem, LearnerColor, TacticRecord};
+use crate::{
+    Catalog, ChessError, ContentItem, LearnerColor, RevealedLine, RevealedMove, TacticRecord,
+};
 use cozy_chess::Color;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -59,6 +62,11 @@ pub struct TacticPgnRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub solution: Option<Vec<String>>,
     pub routes: Vec<TacticPgnRoute>,
+    /// Stable equivalent compiled record, independent of selection/preview token.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capture_identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replay: Option<RevealedLine>,
     #[serde(skip)]
     item: Option<ContentItem>,
 }
@@ -160,6 +168,8 @@ fn preview_record(
         solver_fen: None,
         learner_color: None,
         solution: None,
+        capture_identity: None,
+        replay: None,
         routes: routes
             .iter()
             .enumerate()
@@ -281,6 +291,8 @@ impl TacticPgnRow {
             solver_fen: None,
             learner_color: None,
             solution: None,
+            capture_identity: None,
+            replay: None,
             routes: Vec::new(),
             item: None,
         }
@@ -321,7 +333,34 @@ impl TacticPgnRow {
             .iter()
             .map(|&index| game.plies[index].mv)
             .collect::<Vec<_>>();
-        self.item = Some(compile_pgn_tactic(&tactic, &legal)?);
+        let item = compile_pgn_tactic(&tactic, &legal)?;
+        let mut hash = blake3::Hasher::new();
+        for text in [&item.target.0, &tactic.label, &tactic.solver_fen]
+            .into_iter()
+            .chain(tactic.solution.iter())
+            .chain(tactic.provenance.iter())
+        {
+            hash.update(&(text.len() as u64).to_le_bytes());
+            hash.update(text.as_bytes());
+        }
+        self.capture_identity = Some(hash.finalize().to_hex().to_string());
+        self.replay = Some(RevealedLine {
+            start_fen: start.to_string(),
+            moves: path
+                .indices
+                .iter()
+                .map(|&index| {
+                    let ply = &game.plies[index];
+                    let mut after = ply.board.clone();
+                    after.play(ply.mv);
+                    RevealedMove {
+                        notation: numbered_san(&ply.board, &ply.san),
+                        fen: after.to_string(),
+                    }
+                })
+                .collect(),
+        });
+        self.item = Some(item);
         self.status = TacticPgnStatus::Valid;
         self.solver_fen = Some(solver_fen);
         self.learner_color = Some(match start.side_to_move() {
