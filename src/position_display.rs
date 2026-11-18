@@ -120,6 +120,11 @@ mod tests {
             assert_eq!(completed.display_fen, last_fen);
             assert_eq!(completed.learner_color, LearnerColor::White);
             assert!(completed.legal_moves.is_empty());
+            let hidden = crate::revealed_line(definition, 0).unwrap();
+            assert!(hidden.moves.is_empty());
+            let line = crate::revealed_line(definition, 1).unwrap();
+            assert_eq!(line.moves.len(), 2);
+            assert_eq!(line.moves.last().unwrap().fen, last_fen);
         }
     }
 
