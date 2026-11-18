@@ -31,7 +31,7 @@ impl ContentParser for RepertoirePgnParser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parsed_pgn::{MAX_BYTES, MAX_GAMES, MAX_PLIES};
+    use crate::parsed_pgn::MAX_PLIES;
     use crate::{
         ChangeKind, ContentKind, LearnerColor, PositionCanonicalizer,
         StandardPositionCanonicalizer, plan_import,
@@ -171,28 +171,26 @@ mod tests {
     }
 
     #[test]
-    fn enforces_byte_game_and_ply_limits() {
-        let games = "1.e4 *\n";
-        assert!(
-            RepertoirePgnParser
-                .parse(&white(&games.repeat(MAX_GAMES)))
-                .is_ok()
-        );
+    fn imports_large_multi_game_pgns() {
+        let game = format!("1. e4 {{ {} }} e5 2. Nf3 *\n", "a".repeat(1_024));
+        let catalog = RepertoirePgnParser
+            .parse(&white(&game.repeat(300)))
+            .unwrap();
+        assert_eq!(catalog.items.len(), 2);
+        assert_eq!(catalog.lines.len(), 1);
+    }
+
+    #[test]
+    fn enforces_the_per_game_ply_limit() {
         let plies = "Nf3 Nf6 Ng1 Ng8 ".repeat(MAX_PLIES / 4);
         assert!(
             RepertoirePgnParser
                 .parse(&white(&format!("{plies}*")))
                 .is_ok()
         );
-        for input in [
-            " ".repeat(MAX_BYTES + 1),
-            games.repeat(MAX_GAMES + 1),
-            format!("{plies}Nf3 *"),
-        ] {
-            assert!(matches!(
-                RepertoirePgnParser.parse(&white(&input)),
-                Err(ChessError::InvalidContent(_))
-            ));
-        }
+        assert!(matches!(
+            RepertoirePgnParser.parse(&white(&format!("{plies}Nf3 *"))),
+            Err(ChessError::InvalidContent(_))
+        ));
     }
 }
