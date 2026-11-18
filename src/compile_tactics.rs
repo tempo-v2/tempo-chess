@@ -82,6 +82,7 @@ fn compile_record(record: &TacticRecord) -> Result<ContentItem, ChessError> {
             decisions,
         },
         provenance,
+        lesson: None,
     })
 }
 

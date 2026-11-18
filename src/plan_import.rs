@@ -118,43 +118,13 @@ pub fn plan_import(current: &Catalog, incoming: &Catalog) -> Result<ContentPlan,
                 kind: ChangeKind::Metadata,
             });
         }
-        let kind = if let Some(old) = catalog.items.get(&item.target) {
-            if old.definition.kind != item.definition.kind {
-                return Err(ChessError::IdentityChanged(item.target));
-            }
-            for source in &old.provenance {
-                if !item.provenance.contains(source) {
-                    item.provenance.push(source.clone());
-                }
-            }
-            item.provenance.sort();
-            item.provenance.dedup();
-            if old.definition != item.definition {
-                item.version = ContentVersion(
-                    old.version
-                        .0
-                        .checked_add(1)
-                        .ok_or_else(|| ChessError::VersionExhausted(item.target.clone()))?,
-                );
-                ChangeKind::Semantic
-            } else {
-                item.version = old.version;
-                if old.status == ContentStatus::Quarantined {
-                    item.status = ContentStatus::Quarantined;
-                }
-                let mut normalized = old.clone();
-                normalized.provenance.sort();
-                normalized.provenance.dedup();
-                if normalized == item {
-                    ChangeKind::Unchanged
-                } else {
-                    ChangeKind::Metadata
-                }
-            }
-        } else {
-            item.version = ContentVersion(1);
-            ChangeKind::Added
-        };
+        let old = catalog.items.get(&item.target);
+        if old.is_some_and(|old| old.status == ContentStatus::Quarantined)
+            && old.is_some_and(|old| old.definition == item.definition)
+        {
+            item.status = ContentStatus::Quarantined;
+        }
+        let kind = version_imported_item(old, &mut item)?;
         changes.push(ContentChange {
             target: item.target.clone(),
             kind,
@@ -202,6 +172,41 @@ pub fn plan_import(current: &Catalog, incoming: &Catalog) -> Result<ContentPlan,
     }
     catalog.validate()?;
     Ok(ContentPlan { catalog, changes })
+}
+
+/// Resolve target identity, semantic version and retained provenance uniformly.
+pub(super) fn version_imported_item(
+    old: Option<&crate::ContentItem>,
+    item: &mut crate::ContentItem,
+) -> Result<ChangeKind, ChessError> {
+    let Some(old) = old else {
+        item.version = ContentVersion(1);
+        return Ok(ChangeKind::Added);
+    };
+    if old.definition.kind != item.definition.kind {
+        return Err(ChessError::IdentityChanged(item.target.clone()));
+    }
+    item.provenance.extend(old.provenance.iter().cloned());
+    item.provenance.sort();
+    item.provenance.dedup();
+    if old.definition != item.definition {
+        item.version = ContentVersion(
+            old.version
+                .0
+                .checked_add(1)
+                .ok_or_else(|| ChessError::VersionExhausted(item.target.clone()))?,
+        );
+        return Ok(ChangeKind::Semantic);
+    }
+    item.version = old.version;
+    let mut normalized = old.clone();
+    normalized.provenance.sort();
+    normalized.provenance.dedup();
+    Ok(if normalized == *item {
+        ChangeKind::Unchanged
+    } else {
+        ChangeKind::Metadata
+    })
 }
 
 #[cfg(test)]

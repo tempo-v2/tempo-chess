@@ -48,6 +48,7 @@ pub fn demo_catalog() -> Catalog {
                 decisions: vec![decision.clone()],
             },
             provenance: vec!["fixture".into()],
+            lesson: None,
         },
         ContentItem {
             target: "r1:p2".into(),
@@ -63,6 +64,7 @@ pub fn demo_catalog() -> Catalog {
                 decisions: vec![second.clone()],
             },
             provenance: vec!["fixture".into()],
+            lesson: None,
         },
         ContentItem {
             target: "t1".into(),
@@ -77,6 +79,7 @@ pub fn demo_catalog() -> Catalog {
                 decisions: vec![decision, second],
             },
             provenance: vec!["fixture".into()],
+            lesson: None,
         },
     ];
     Catalog {

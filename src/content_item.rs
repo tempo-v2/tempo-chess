@@ -1,6 +1,6 @@
 //! ContentItem and its usage scenarios.
 
-use crate::{ChessDefinition, ContentStatus};
+use crate::{ChessDefinition, ContentStatus, RepertoireLesson};
 use serde::{Deserialize, Serialize};
 use tempo_study::Exercise;
 use tempo_types::{ContentVersion, TargetId};
@@ -30,6 +30,9 @@ pub struct ContentItem {
     pub status: ContentStatus,
     pub definition: ChessDefinition,
     pub provenance: Vec<String>,
+    /// PGN context for explicit teaching. Keep it out of blind test views.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lesson: Option<RepertoireLesson>,
 }
 impl ContentItem {
     pub fn exercise(&self) -> Exercise<ChessDefinition> {

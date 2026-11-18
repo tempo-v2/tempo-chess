@@ -70,7 +70,8 @@ than silent reinterpretations of old attempts.
 | --- | --- | --- |
 | PGN plus source, repertoire and learner color | [import_request.rs](src/import_request.rs) | Reject a mismatched repertoire, retain provenance, and preserve legacy requests. |
 | Parser interface | [content_parser.rs](src/content_parser.rs) | Parse and plan through the trait without a store. |
-| Standard repertoire PGN import | [repertoire_pgn_parser.rs](src/repertoire_pgn_parser.rs) | Import legal mainlines, share transposed positions, and preserve versions across annotation edits. |
+| Standard repertoire PGN import | [compile_repertoire.rs](src/compile_repertoire.rs) | Import legal nested variations, share transposed positions, and retain comments for teaching. |
+| Complete repertoire replacement | [plan_repertoire_replacement.rs](src/plan_repertoire_replacement.rs) | Replace routes, retire omitted targets, and preserve versions of unchanged answers. |
 | Learner color | [learner_color.rs](src/learner_color.rs) | Study Black's reply from a White-to-move starting position. |
 | Registered parser substitute | [fixture_parser.rs](src/fixture_parser.rs) | Known PGN works; unknown input explicitly fails. |
 | Position identity interface | [position_canonicalizer.rs](src/position_canonicalizer.rs) | Ask the trait for a key instead of treating raw FEN as identity. |
@@ -101,14 +102,13 @@ structural target/line validation, semantic content changes and quarantine
 planning. Move/FEN shape checks do not validate chess legality or calculate the
 best move. A `PositionKey` is not itself a canonicalizer.
 
-`RepertoirePgnParser` requires a repertoire name and `LearnerColor`. It accepts
-up to 256 KiB, 32 games, and 512 mainline plies per game. Every game starts from
-the orthodox initial position and ends with a result marker. Use standard SAN.
-Tags, comments, annotations, and balanced variations are skipped, apart from
-tags that specify rules, starting position, or result. The parser checks every
-mainline move and uses the opponent's moves to reach later positions. Import
-produces only repertoire targets in this round. It rejects competing responses
-to the same position within one request.
+`compile_repertoire` accepts a stable repertoire ID, display name, and
+`LearnerColor`. Uploads support up to 256 KiB, 32 games, 512 plies per game
+including variations, and 24 levels of variation nesting. Every game starts
+from the orthodox initial position, uses standard SAN, and ends with a result
+marker. Opponent alternatives form separate routes. Competing learner moves at
+the same position produce a conflict. Move comments go into the lesson metadata
+for teaching, and the prescribed sequence stays in the definition.
 
 `StandardPositionCanonicalizer` checks standard-chess positions with
 `cozy-chess`. The record key uses the first four FEN fields and retains an en

@@ -18,6 +18,8 @@ use serde::{Deserialize, Serialize};
 pub enum ContentStatus {
     Active,
     Quarantined,
+    /// Omitted from the current repertoire, with its definition and learning retained.
+    Retired,
 }
 
 #[cfg(test)]

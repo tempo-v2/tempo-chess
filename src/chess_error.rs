@@ -28,7 +28,22 @@ pub enum ChessError {
 }
 impl fmt::Display for ChessError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{self:?}")
+        match self {
+            Self::InvalidContent(message) | Self::UnknownFixture(message) => f.write_str(message),
+            Self::UnknownTarget(target) => write!(f, "unknown target {}", target.0),
+            Self::ConflictingResponse {
+                repertoire,
+                position,
+            } => write!(
+                f,
+                "conflicting learner responses in {repertoire} at position {}",
+                position.0
+            ),
+            Self::IdentityChanged(target) => write!(f, "target identity changed for {}", target.0),
+            Self::VersionExhausted(target) => {
+                write!(f, "content version exhausted for target {}", target.0)
+            }
+        }
     }
 }
 impl Error for ChessError {}

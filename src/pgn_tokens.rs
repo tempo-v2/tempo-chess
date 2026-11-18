@@ -1,4 +1,4 @@
-//! Read PGN tags and mainline tokens while skipping annotations and variations.
+//! Read PGN tags, move text, comments and variation delimiters.
 
 use crate::ChessError;
 
@@ -8,6 +8,9 @@ pub(super) enum Token<'a> {
     MoveNumber { number: u16, black: bool },
     San(&'a str),
     Result(&'a str),
+    Comment(&'a str),
+    VariationStart,
+    VariationEnd,
 }
 
 pub(super) struct PgnTokens<'a> {
@@ -22,38 +25,39 @@ impl<'a> PgnTokens<'a> {
     }
 
     pub(super) fn next(&mut self) -> Result<Option<Token<'a>>, ChessError> {
-        let mut variations = 0_usize;
         loop {
             self.rest = self.rest.trim_start();
             match self.rest.as_bytes().first() {
-                None if variations == 0 => return Ok(None),
-                None => return Err(invalid("unclosed PGN variation")),
+                None => return Ok(None),
                 Some(b'{') => {
-                    let (_, rest) = self
-                        .rest
+                    let (comment, rest) = self.rest[1..]
                         .split_once('}')
                         .ok_or_else(|| invalid("unclosed PGN comment"))?;
                     self.rest = rest;
+                    return Ok(Some(Token::Comment(comment.trim())));
                 }
                 Some(b';') => {
-                    self.rest = self
-                        .rest
-                        .find(['\n', '\r'])
-                        .map_or("", |end| &self.rest[end..]);
+                    let comment_line = &self.rest[1..];
+                    let (comment, rest) = comment_line.split_at(
+                        comment_line
+                            .find(['\n', '\r'])
+                            .unwrap_or(comment_line.len()),
+                    );
+                    self.rest = rest;
+                    return Ok(Some(Token::Comment(comment.trim())));
                 }
                 Some(b'(') => {
-                    variations += 1;
                     self.rest = &self.rest[1..];
+                    return Ok(Some(Token::VariationStart));
                 }
-                Some(b')') if variations > 0 => {
-                    variations -= 1;
+                Some(b')') => {
                     self.rest = &self.rest[1..];
+                    return Ok(Some(Token::VariationEnd));
                 }
-                Some(b'}' | b')' | b']') => {
+                Some(b'}' | b']') => {
                     return Err(invalid("unexpected PGN closing delimiter"));
                 }
-                Some(b'[') if variations == 0 => return self.tag().map(Some),
-                Some(b'[') => return Err(invalid("PGN tag inside a variation")),
+                Some(b'[') => return self.tag().map(Some),
                 Some(b'$') => {
                     self.rest = &self.rest[1..];
                     let count = self.rest.bytes().take_while(u8::is_ascii_digit).count();
@@ -61,9 +65,6 @@ impl<'a> PgnTokens<'a> {
                         return Err(invalid("PGN numeric annotation requires digits"));
                     }
                     self.rest = &self.rest[count..];
-                }
-                Some(_) if variations > 0 => {
-                    self.take_word();
                 }
                 Some(_) => {
                     if let Some(token) = self.move_number()? {
@@ -177,6 +178,22 @@ mod tests {
                 black: false,
             },
             Token::San("e4"),
+            Token::VariationStart,
+            Token::MoveNumber {
+                number: 1,
+                black: false,
+            },
+            Token::San("c4"),
+            Token::Comment("example"),
+            Token::VariationStart,
+            Token::MoveNumber {
+                number: 1,
+                black: false,
+            },
+            Token::San("Nf3"),
+            Token::VariationEnd,
+            Token::VariationEnd,
+            Token::Comment("comment"),
             Token::MoveNumber {
                 number: 1,
                 black: true,
