@@ -9,16 +9,17 @@ use serde::{Deserialize, Serialize};
 ///
 /// The application constructs a request after obtaining PGN bytes. A
 /// [`crate::ContentParser`] uses the source label as provenance and the optional
-/// repertoire name as context. File/provider I/O happens before this boundary.
+/// repertoire identifier as context. File/provider I/O happens before this boundary.
 ///
-/// A missing repertoire name permits content without repertoire context, such as
-/// tactics. In the fixture parser, a supplied name must match the registered
-/// repertoire. [`crate::RepertoirePgnParser`] requires both a repertoire name
-/// and a learner color. A missing learner color is accepted by legacy fixtures.
+/// A missing identifier permits content without repertoire context, such as
+/// tactics. The fixture parser checks any supplied identifier against the
+/// registered repertoire. [`crate::RepertoirePgnParser`] requires its configured
+/// destination identifier and a learner color.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportRequest {
     pub pgn: String,
     pub source: String,
+    /// Stable repertoire context for the selected parser.
     pub repertoire: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub learner_color: Option<LearnerColor>,

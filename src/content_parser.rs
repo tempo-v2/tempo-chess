@@ -12,7 +12,7 @@ use crate::{Catalog, ChessError, ImportRequest};
 /// application transaction.
 ///
 /// [`crate::FixtureParser`] registers exact inputs for wiring tests.
-/// [`crate::RepertoirePgnParser`] imports orthodox repertoire mainlines.
+/// [`crate::RepertoirePgnParser`] compiles orthodox repertoire PGN for an explicit standard-profile destination.
 ///
 /// ```
 /// use tempo_chess::{ContentParser, ImportRequest, demo_parser, REPERTOIRE_PGN};

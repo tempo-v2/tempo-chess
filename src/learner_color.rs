@@ -26,11 +26,11 @@ mod tests {
 
     #[test]
     fn black_studies_blacks_reply_to_the_first_move() {
-        let catalog = RepertoirePgnParser
+        let catalog = RepertoirePgnParser::new("black", "Black openings")
             .parse(&ImportRequest {
                 pgn: "1. e4 c5 *".into(),
                 source: "Sicilian".into(),
-                repertoire: Some("Black openings".into()),
+                repertoire: Some("black".into()),
                 learner_color: Some(LearnerColor::Black),
             })
             .unwrap();
