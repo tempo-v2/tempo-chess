@@ -5,6 +5,7 @@
 //! positions and repertoire PGNs, start with the two concrete import adapters.
 
 mod apply_setup_move;
+mod authored_repertoire;
 mod catalog;
 mod change_kind;
 mod chess_answer;
@@ -31,10 +32,15 @@ mod fixture_canonicalizer;
 mod fixture_comparator;
 mod fixture_parser;
 mod game_comparator;
+pub use authored_repertoire::{
+    AuthoredRepertoire, DepartureKind, GapDraft, OpponentGap, RepertoireAdherence,
+    legal_model_moves,
+};
 mod played_game;
 pub use played_game::{
     DecisionAdherence, PlayedDecision, PlayedGame, RepertoireComparison, RepertoireObservation,
-    compare_active_repertoires, compare_played_game, opponent_deviations, parse_played_games,
+    compare_active_repertoires, compare_authored_repertoires, compare_played_game,
+    opponent_deviations, parse_played_games,
 };
 mod grading_scheme;
 mod import_request;
