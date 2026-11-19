@@ -60,6 +60,8 @@ mod repertoire_lesson;
 mod repertoire_line;
 mod repertoire_pgn_parser;
 mod standard_position_canonicalizer;
+mod structure;
+pub use structure::structural_neighbors;
 mod standard_uci;
 mod tactic_pgn;
 mod tactic_record;
