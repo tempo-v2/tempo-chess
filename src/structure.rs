@@ -1,7 +1,11 @@
 //! Rank real board positions by shared pawn structure and piece placement.
 use crate::standard_position_canonicalizer::{board_key, parse_position};
-use crate::{ChessError, PositionKey};
+use crate::standard_uci::legal_move;
+use crate::{ChessAnswer, ChessError, PositionKey};
+use cozy_chess::util::display_san_move;
 use cozy_chess::{Board, Color, File, Piece};
+use serde::Serialize;
+use std::collections::BTreeMap;
 
 /// Return nearby canonical learner positions from the caller's eligible catalog.
 /// Same-position transpositions share their key and are excluded from the results.
@@ -11,8 +15,95 @@ pub fn structural_neighbors<'a>(
     limit: usize,
 ) -> Result<Vec<PositionKey>, ChessError> {
     let position = parse_position(fen, false)?;
-    let own_key = board_key(&position);
-    let baseline = Structure::read(&position);
+    Ok(rank_positions(&position, candidates)?
+        .into_iter()
+        .take(limit)
+        .map(|(_, key)| key.clone())
+        .collect())
+}
+
+/// A prescribed response from an active saved repertoire position.
+pub struct SavedRepertoireResponse {
+    pub repertoire_id: String,
+    pub answer: ChessAnswer,
+}
+
+#[derive(Serialize)]
+pub struct NearbyResponse {
+    pub repertoire_id: String,
+    pub uci: String,
+    pub san: String,
+    /// The same move and piece type can be played in the requested position.
+    pub reusable: bool,
+}
+
+#[derive(Serialize)]
+pub struct NearbyPosition {
+    pub fen: String,
+    pub distance: u32,
+    pub responses: Vec<NearbyResponse>,
+}
+
+#[derive(Default, Serialize)]
+pub struct NearbyRepertoirePositions {
+    pub current: Vec<NearbyPosition>,
+    pub other: Vec<NearbyPosition>,
+}
+
+/// Project the closest distinct same-side positions for the current repertoire
+/// and other repertoires. Preserve their own SAN even if a move cannot be reused.
+pub fn nearby_repertoire_positions(
+    fen: &str,
+    repertoire_id: &str,
+    candidates: &BTreeMap<PositionKey, Vec<SavedRepertoireResponse>>,
+    limit_per_group: usize,
+) -> Result<NearbyRepertoirePositions, ChessError> {
+    let position = parse_position(fen, false)?;
+    let mut nearby = NearbyRepertoirePositions::default();
+    for (distance, key) in rank_positions(&position, candidates.keys())? {
+        let (current, other): (Vec<_>, Vec<_>) = candidates[key]
+            .iter()
+            .partition(|entry| entry.repertoire_id == repertoire_id);
+        for (group, entries) in [(&mut nearby.current, current), (&mut nearby.other, other)] {
+            if entries.is_empty() || group.len() == limit_per_group {
+                continue;
+            }
+            let fen = format!("{} 0 1", key.0);
+            let board = parse_position(&fen, false)?;
+            let responses = entries
+                .into_iter()
+                .map(|entry| {
+                    let uci = &entry.answer.uci;
+                    let mv = legal_move(&board, uci)?;
+                    let reusable = legal_move(&position, uci)
+                        .is_ok_and(|here| board.piece_on(mv.from) == position.piece_on(here.from));
+                    Ok(NearbyResponse {
+                        repertoire_id: entry.repertoire_id.clone(),
+                        uci: uci.clone(),
+                        san: display_san_move(&board, mv).to_string(),
+                        reusable,
+                    })
+                })
+                .collect::<Result<_, ChessError>>()?;
+            group.push(NearbyPosition {
+                fen,
+                distance,
+                responses,
+            });
+        }
+        if nearby.current.len() == limit_per_group && nearby.other.len() == limit_per_group {
+            break;
+        }
+    }
+    Ok(nearby)
+}
+
+fn rank_positions<'a>(
+    position: &Board,
+    candidates: impl IntoIterator<Item = &'a PositionKey>,
+) -> Result<Vec<(u32, &'a PositionKey)>, ChessError> {
+    let own_key = board_key(position);
+    let baseline = Structure::read(position);
     let mut ranked = Vec::new();
     for key in candidates {
         if *key == own_key {
@@ -25,11 +116,7 @@ pub fn structural_neighbors<'a>(
     }
     ranked.sort_unstable();
     ranked.dedup();
-    Ok(ranked
-        .into_iter()
-        .take(limit)
-        .map(|(_, key)| key.clone())
-        .collect())
+    Ok(ranked)
 }
 
 struct Structure {
@@ -97,6 +184,62 @@ impl Structure {
 mod tests {
     use super::*;
     use crate::{PositionCanonicalizer, START_FEN, StandardPositionCanonicalizer};
+
+    #[test]
+    fn nearby_examples_keep_source_notation_and_only_reuse_matching_legal_pieces() {
+        let gap = "4k3/8/8/8/8/8/8/R3K3 w - - 0 1";
+        let nearby = "4k3/8/8/8/8/8/7P/R3K3 w - - 0 1";
+        let queen = "4k3/8/8/8/8/8/8/Q3K3 w - - 0 1";
+        let canonicalizer = StandardPositionCanonicalizer;
+        let key = |fen| canonicalizer.canonicalize(fen).unwrap();
+        let saved = |id: &str, uci| SavedRepertoireResponse {
+            repertoire_id: id.into(),
+            answer: ChessAnswer::from(uci),
+        };
+        let candidates = BTreeMap::from([
+            (key(gap), vec![saved("book", "a1a2")]),
+            (
+                key(nearby),
+                vec![
+                    saved("book", "a1a2"),
+                    saved("two", "h2h3"),
+                    saved("three", "a1a2"),
+                ],
+            ),
+            (key(queen), vec![saved("other", "a1a2")]),
+        ]);
+        let result = nearby_repertoire_positions(gap, "book", &candidates, 2).unwrap();
+        assert_eq!(result.current.len(), 1);
+        assert_eq!(result.other.len(), 2);
+        assert_eq!(result.current[0].responses[0].san, "Ra2");
+        assert!(result.current[0].responses[0].reusable);
+        assert_eq!(
+            result
+                .other
+                .iter()
+                .flat_map(|p| &p.responses)
+                .filter(|mv| mv.reusable)
+                .count(),
+            1
+        );
+        let queen_move = result
+            .other
+            .iter()
+            .flat_map(|p| &p.responses)
+            .find(|response| response.repertoire_id == "other")
+            .unwrap();
+        assert_eq!(queen_move.san, "Qa2");
+        assert!(!queen_move.reusable);
+        assert!(
+            !result
+                .other
+                .iter()
+                .flat_map(|p| &p.responses)
+                .find(|response| response.uci == "h2h3")
+                .unwrap()
+                .reusable
+        );
+    }
 
     #[test]
     fn ranking_ignores_counters_and_uses_legal_piece_and_pawn_placement() {
