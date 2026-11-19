@@ -1,7 +1,8 @@
 //! ChessDefinition and its usage scenarios.
 
 use crate::chess_answer::valid_uci;
-use crate::{ChessError, ContentKind, Decision, GradingScheme};
+use crate::standard_position_canonicalizer::parse_position;
+use crate::{ChessError, ContentKind, Decision, GradingScheme, LearnerColor};
 use serde::{Deserialize, Serialize};
 
 /// The complete chess-specific instructions for presenting and grading one target.
@@ -39,6 +40,17 @@ impl ChessDefinition {
     pub fn is_repertoire(&self) -> bool {
         matches!(self.kind, ContentKind::Repertoire { .. })
     }
+    /// The side that solves this definition, independent of any later board cursor.
+    pub fn learner_color(&self) -> Result<LearnerColor, ChessError> {
+        let start = self
+            .decisions
+            .first()
+            .ok_or_else(|| ChessError::InvalidContent("missing solver position".into()))?;
+        Ok(LearnerColor::from_board(
+            parse_position(&start.fen, true)?.side_to_move(),
+        ))
+    }
+
     pub fn validate(&self) -> Result<(), ChessError> {
         if self.decisions.is_empty() || (self.is_repertoire() && self.decisions.len() != 1) {
             return Err(ChessError::InvalidContent(

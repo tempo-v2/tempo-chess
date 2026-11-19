@@ -3,7 +3,6 @@
 use crate::standard_position_canonicalizer::parse_position;
 use crate::standard_uci::legal_move;
 use crate::{ChessDefinition, ChessError, ChessState, LearnerColor};
-use cozy_chess::Color;
 use cozy_chess::util::{display_san_move, display_uci_move};
 use std::collections::BTreeMap;
 
@@ -21,6 +20,13 @@ pub fn legal_move_labels(fen: &str) -> Result<BTreeMap<String, String>, ChessErr
         false
     });
     Ok(labels)
+}
+
+/// Format one already disclosed move. This does not select an answer.
+pub fn move_san(fen: &str, uci: &str) -> Result<String, ChessError> {
+    let board = parse_position(fen, false)?;
+    let mv = legal_move(&board, uci)?;
+    Ok(display_san_move(&board, mv).to_string())
 }
 
 /// Board facts safe to send to a learner. The move list is empty when locked.
@@ -41,12 +47,8 @@ pub fn project_position(
 ) -> Result<PositionDisplay, ChessError> {
     let decisions = &definition.decisions;
     let invalid = || ChessError::InvalidContent("invalid board projection cursor".into());
-    let first = decisions.first().ok_or_else(invalid)?;
     let index = state.decision_index;
-    let learner_color = match parse_position(&first.fen, true)?.side_to_move() {
-        Color::White => LearnerColor::White,
-        Color::Black => LearnerColor::Black,
-    };
+    let learner_color = definition.learner_color()?;
     let board = match decisions.get(index) {
         Some(decision) => parse_position(&decision.fen, true)?,
         None if !ready && index == decisions.len() => {

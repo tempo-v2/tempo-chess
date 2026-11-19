@@ -107,7 +107,7 @@ pub use plan_import::plan_import;
 pub use plan_repertoire_replacement::plan_repertoire_replacement;
 pub use plan_tactic_capture::{TacticCapturePlan, plan_tactic_capture};
 pub use position_canonicalizer::PositionCanonicalizer;
-pub use position_display::{PositionDisplay, legal_move_labels, project_position};
+pub use position_display::{PositionDisplay, legal_move_labels, move_san, project_position};
 pub use position_key::PositionKey;
 pub use repertoire_lesson::RepertoireLesson;
 pub use repertoire_line::RepertoireLine;
