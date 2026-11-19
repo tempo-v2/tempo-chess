@@ -4,7 +4,24 @@ use crate::standard_position_canonicalizer::parse_position;
 use crate::standard_uci::legal_move;
 use crate::{ChessDefinition, ChessError, ChessState, LearnerColor};
 use cozy_chess::Color;
-use cozy_chess::util::display_uci_move;
+use cozy_chess::util::{display_san_move, display_uci_move};
+use std::collections::BTreeMap;
+
+/// Map each legal UCI move to SAN in this exact standard position.
+pub fn legal_move_labels(fen: &str) -> Result<BTreeMap<String, String>, ChessError> {
+    let board = parse_position(fen, false)?;
+    let mut labels = BTreeMap::new();
+    board.generate_moves(|moves| {
+        labels.extend(moves.into_iter().map(|mv| {
+            (
+                display_uci_move(&board, mv).to_string(),
+                display_san_move(&board, mv).to_string(),
+            )
+        }));
+        false
+    });
+    Ok(labels)
+}
 
 /// Board facts safe to send to a learner. The move list is empty when locked.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -71,6 +88,26 @@ pub fn project_position(
 mod tests {
     use super::*;
     use crate::{TacticRecord, compile_tactics};
+
+    #[test]
+    fn labels_legal_moves_in_their_own_positions() {
+        let before =
+            legal_move_labels("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1")
+                .unwrap();
+        assert_eq!(before["d7d5"], "d5");
+        assert_eq!(before["g8f6"], "Nf6");
+        assert!(!before.contains_key("e4d5"));
+
+        let after =
+            legal_move_labels("rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2")
+                .unwrap();
+        assert_eq!(after["e4d5"], "exd5");
+        assert!(!after.contains_key("e4e6"));
+
+        let promotions = legal_move_labels("4k3/P7/8/8/8/8/8/4K3 w - - 0 1").unwrap();
+        assert_eq!(promotions["a7a8n"], "a8=N");
+        assert_eq!(promotions["a7a8q"], "a8=Q+");
+    }
 
     #[test]
     fn projects_all_promotions_castling_en_passant_and_the_final_reply() {
