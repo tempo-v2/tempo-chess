@@ -5,7 +5,7 @@ use crate::ChessError;
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Token<'a> {
     Tag(&'a str, &'a str),
-    MoveNumber { number: u16, black: bool },
+    MoveNumber { number: usize, black: bool },
     San(&'a str),
     Result(&'a str),
     Comment(&'a str),
