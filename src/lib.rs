@@ -38,6 +38,14 @@ pub use authored_repertoire::{
     AuthoredRepertoire, DepartureKind, GapDraft, OpponentGap, RepertoireAdherence,
     legal_model_moves,
 };
+mod game_detector;
+pub use game_detector::{
+    BoardSubject, DetectedMoment, DetectionControl, DetectionOutcome, DetectionStop,
+    DetectionValidationError, DetectorDescriptor, GameDetectionInput, GameDetector, PieceRole,
+    ValidatedMoment, validate_detected_moments,
+};
+mod played_game_timeline;
+pub use played_game_timeline::{PlayedGameTimeline, PositionOccurrence};
 mod played_game;
 pub use played_game::{
     DecisionAdherence, PlayedDecision, PlayedGame, RepertoireComparison, RepertoireObservation,

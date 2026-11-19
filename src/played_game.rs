@@ -3,7 +3,10 @@
 use crate::parsed_pgn::{invalid, parse_pgn, parse_pgn_records};
 use crate::revealed_line::{RevealedLine, RevealedMove, numbered_san};
 use crate::standard_position_canonicalizer::board_key;
-use crate::{AuthoredRepertoire, Catalog, ChessError, ContentKind, LearnerColor, PositionKey};
+use crate::{
+    AuthoredRepertoire, Catalog, ChessError, ContentKind, LearnerColor, PlayedGameTimeline,
+    PositionKey,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use tempo_types::{ContentVersion, TargetId};
 
@@ -12,6 +15,7 @@ pub struct PlayedGame {
     pub tags: BTreeMap<String, String>,
     pub result: String,
     start: PositionKey,
+    starting_board: cozy_chess::Board,
     mainline_pgn: String,
     pub(super) moves: Vec<(PositionKey, cozy_chess::Color, String)>,
 }
@@ -19,6 +23,14 @@ pub struct PlayedGame {
 impl PlayedGame {
     pub fn mainline_pgn(&self) -> &str {
         &self.mainline_pgn
+    }
+
+    /// Project the exact mainline on demand, retaining both sides and board counters.
+    pub fn timeline(&self) -> PlayedGameTimeline {
+        PlayedGameTimeline::from_mainline(
+            self.starting_board.clone(),
+            self.moves.iter().map(|(_, _, uci)| uci.as_str()),
+        )
     }
 
     /// Stable played facts for local upload identity. Clocks and annotations are excluded.
@@ -39,7 +51,8 @@ pub fn parse_played_games(pgn: &str) -> Result<Vec<Result<PlayedGame, ChessError
             if game.result == "*" {
                 return Err(invalid("game is unfinished"));
             }
-            let start = board_key(&game.plies[game.mainline[0]].board);
+            let starting_board = game.plies[game.mainline[0]].board.clone();
+            let start = board_key(&starting_board);
             let moves = game
                 .mainline
                 .iter()
@@ -67,6 +80,7 @@ pub fn parse_played_games(pgn: &str) -> Result<Vec<Result<PlayedGame, ChessError
                     .collect(),
                 result: game.result.into(),
                 start,
+                starting_board,
                 mainline_pgn,
                 moves,
             })
