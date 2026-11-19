@@ -1,6 +1,7 @@
 //! Played games use the legal mainline only, even when the PGN includes analysis.
 
 use crate::parsed_pgn::{invalid, parse_pgn, parse_pgn_records};
+use crate::revealed_line::{RevealedLine, RevealedMove, numbered_san};
 use crate::standard_position_canonicalizer::board_key;
 use crate::{AuthoredRepertoire, Catalog, ChessError, ContentKind, LearnerColor, PositionKey};
 use std::collections::{BTreeMap, BTreeSet};
@@ -71,6 +72,47 @@ pub fn parse_played_games(pgn: &str) -> Result<Vec<Result<PlayedGame, ChessError
             })
         })
         .collect())
+}
+
+/// Show an already played mainline through a verified deviation. The caller
+/// supplies the retained observation and the issued repertoire position.
+pub fn played_deviation(
+    pgn: &str,
+    ply: usize,
+    position: &PositionKey,
+    played: &str,
+) -> Result<Option<(String, RevealedLine)>, ChessError> {
+    let games = parse_pgn(pgn)?;
+    let [game] = games.as_slice() else {
+        return Ok(None);
+    };
+    let Some(last) = ply.checked_sub(1).and_then(|i| game.mainline.get(i)) else {
+        return Ok(None);
+    };
+    let deviation = &game.plies[*last];
+    if &board_key(&deviation.board) != position || deviation.uci != played {
+        return Ok(None);
+    }
+    let moves = game.mainline[..ply]
+        .iter()
+        .map(|&index| {
+            let ply = &game.plies[index];
+            let notation = numbered_san(&ply.board, &ply.san);
+            let mut after = ply.board.clone();
+            after.play(ply.mv);
+            RevealedMove {
+                notation,
+                fen: after.to_string(),
+            }
+        })
+        .collect();
+    Ok(Some((
+        deviation.san.clone(),
+        RevealedLine {
+            start_fen: game.plies[game.mainline[0]].board.to_string(),
+            moves,
+        },
+    )))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -313,6 +355,39 @@ pub fn opponent_deviations(
 mod tests {
     use super::*;
     use crate::compile_repertoire;
+
+    #[test]
+    fn played_replay_uses_the_custom_start_and_stops_at_the_verified_mainline_move() {
+        let pgn = r#"[SetUp "1"]
+[FEN "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 9 14"]
+
+14. Bc4 (14. Nf3) Nc6 1-0"#;
+        let game = parse_pgn(pgn).unwrap().pop().unwrap();
+        let position = board_key(&game.plies[game.mainline[0]].board);
+        let (san, line) = played_deviation(pgn, 1, &position, "f1c4")
+            .unwrap()
+            .unwrap();
+        assert_eq!(san, "Bc4");
+        assert!(line.start_fen.ends_with(" 9 14"));
+        assert_eq!(line.moves.len(), 1);
+        assert_eq!(line.moves[0].notation, "14. Bc4");
+        assert!(line.moves[0].fen.contains("/2B1P3/"));
+        assert!(
+            played_deviation(pgn, 1, &position, "g1f3")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            played_deviation(pgn, 2, &position, "b8c6")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            played_deviation(pgn, 3, &position, "b8c6")
+                .unwrap()
+                .is_none()
+        );
+    }
 
     #[test]
     fn canonical_transposition_matches_even_after_uncovered_moves() {

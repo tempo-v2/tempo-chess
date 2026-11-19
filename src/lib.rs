@@ -40,7 +40,7 @@ mod played_game;
 pub use played_game::{
     DecisionAdherence, PlayedDecision, PlayedGame, RepertoireComparison, RepertoireObservation,
     compare_active_repertoires, compare_authored_repertoires, compare_played_game,
-    opponent_deviations, parse_played_games,
+    opponent_deviations, parse_played_games, played_deviation,
 };
 mod grading_scheme;
 mod import_request;
