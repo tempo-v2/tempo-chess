@@ -6,6 +6,8 @@
 
 mod apply_setup_move;
 mod authored_repertoire;
+mod marked_lines;
+pub use marked_lines::{MarkedDraft, MoveReplacement, draft_marked_lines};
 mod catalog;
 mod change_kind;
 mod chess_answer;
