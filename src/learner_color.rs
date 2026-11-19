@@ -12,6 +12,13 @@ pub enum LearnerColor {
 }
 
 impl LearnerColor {
+    pub(crate) fn from_board(color: cozy_chess::Color) -> Self {
+        match color {
+            cozy_chess::Color::White => Self::White,
+            cozy_chess::Color::Black => Self::Black,
+        }
+    }
+
     pub(crate) fn board_color(self) -> cozy_chess::Color {
         match self {
             Self::White => cozy_chess::Color::White,

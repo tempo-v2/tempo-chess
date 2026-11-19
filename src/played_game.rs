@@ -2,7 +2,7 @@
 
 use crate::parsed_pgn::{invalid, parse_pgn, parse_pgn_records};
 use crate::standard_position_canonicalizer::board_key;
-use crate::{Catalog, ChessError, ContentKind, LearnerColor, PositionKey};
+use crate::{AuthoredRepertoire, Catalog, ChessError, ContentKind, LearnerColor, PositionKey};
 use std::collections::{BTreeMap, BTreeSet};
 use tempo_types::{ContentVersion, TargetId};
 
@@ -12,7 +12,7 @@ pub struct PlayedGame {
     pub result: String,
     start: PositionKey,
     mainline_pgn: String,
-    moves: Vec<(PositionKey, cozy_chess::Color, String)>,
+    pub(super) moves: Vec<(PositionKey, cozy_chess::Color, String)>,
 }
 
 impl PlayedGame {
@@ -177,6 +177,20 @@ pub fn compare_active_repertoires(
     color: LearnerColor,
     documents: &BTreeMap<String, String>,
 ) -> Result<Vec<PlayedDecision>, ChessError> {
+    let books = documents
+        .iter()
+        .map(|(id, pgn)| Ok((id.clone(), AuthoredRepertoire::parse(pgn)?)))
+        .collect::<Result<_, ChessError>>()?;
+    Ok(compare_authored_repertoires(game, catalog, color, &books))
+}
+
+/// Use the same compiled authored books across a batch of comparisons.
+pub fn compare_authored_repertoires(
+    game: &PlayedGame,
+    catalog: &Catalog,
+    color: LearnerColor,
+    books: &BTreeMap<String, AuthoredRepertoire>,
+) -> Vec<PlayedDecision> {
     let mut coverage = BTreeMap::<_, Vec<_>>::new();
     for item in catalog.items.values().filter(|item| item.active()) {
         if let ContentKind::Repertoire {
@@ -190,27 +204,8 @@ pub fn compare_active_repertoires(
                 .push((repertoire, item));
         }
     }
-    let mut routes = BTreeMap::new();
-    for (repertoire, pgn) in documents {
-        let mut edges = Vec::new();
-        for authored in parse_pgn(pgn)? {
-            for route in authored.routes()? {
-                edges.push(
-                    route
-                        .into_iter()
-                        .map(|index| {
-                            let ply = &authored.plies[index];
-                            (board_key(&ply.board), ply.uci.clone())
-                        })
-                        .collect::<Vec<_>>(),
-                );
-            }
-        }
-        routes.insert(repertoire, edges);
-    }
 
-    Ok(game
-        .moves
+    game.moves
         .iter()
         .enumerate()
         .filter(|(_, (_, side, _))| *side == color.board_color())
@@ -237,8 +232,8 @@ pub fn compare_active_repertoires(
                 let distances: Vec<_> = covered
                     .iter()
                     .map(|(repertoire, _)| {
-                        routes.get(repertoire).map(|lines| {
-                            lines
+                        books.get(*repertoire).map(|book| {
+                            book.routes
                                 .iter()
                                 .flat_map(|line| {
                                     line.iter()
@@ -279,7 +274,7 @@ pub fn compare_active_repertoires(
                 adherence,
             }
         })
-        .collect())
+        .collect()
 }
 
 /// Count opposing moves that disagree with all verified authored branches
