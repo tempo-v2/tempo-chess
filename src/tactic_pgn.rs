@@ -12,8 +12,6 @@ use cozy_chess::Color;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-const MAX_PREVIEW_PLIES: usize = 16_384;
-
 /// Override a record's default interpretation or select a route and segment.
 /// Record, route, and start offsets are zero-based. The end offset is exclusive.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,7 +103,7 @@ impl TacticPgnPreview {
     }
 }
 
-/// Parse a bounded PGN batch, retaining individual syntax/legality errors.
+/// Parse a PGN batch, retaining individual syntax/legality errors.
 /// A single-route FEN snippet defaults to its complete solver-first line.
 /// Games and branched snippets require a selection.
 pub fn preview_tactic_pgn(
@@ -123,18 +121,11 @@ pub fn preview_tactic_pgn(
             return Err(invalid("a PGN record has more than one selection"));
         }
     }
-    let mut budget = MAX_PREVIEW_PLIES;
     let rows = records
         .into_iter()
         .enumerate()
         .map(|(record, game)| match game {
-            Ok(game) => preview_record(
-                record,
-                &game,
-                by_index.get(&record).copied(),
-                source,
-                &mut budget,
-            ),
+            Ok(game) => preview_record(record, &game, by_index.get(&record).copied(), source),
             Err(error) => TacticPgnRow::invalid(record, error),
         })
         .collect();
@@ -146,20 +137,8 @@ fn preview_record(
     game: &PgnGame<'_>,
     selection: Option<&TacticPgnSelection>,
     source: &str,
-    budget: &mut usize,
 ) -> TacticPgnRow {
-    let routes = match game.routes() {
-        Ok(routes) => routes,
-        Err(error) => return TacticPgnRow::invalid(record, error),
-    };
-    let preview_plies: usize = routes.iter().map(Vec::len).sum();
-    let Some(remaining) = budget.checked_sub(preview_plies) else {
-        return TacticPgnRow::invalid(
-            record,
-            invalid("PGN variation preview exceeds 16,384 route plies. Split the upload."),
-        );
-    };
-    *budget = remaining;
+    let routes: Vec<_> = game.routes().collect();
     let mut row = TacticPgnRow {
         record,
         status: TacticPgnStatus::SelectionRequired,

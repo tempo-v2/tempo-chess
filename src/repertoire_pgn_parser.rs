@@ -44,7 +44,6 @@ impl ContentParser for RepertoirePgnParser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parsed_pgn::MAX_PLIES;
     use crate::{
         ChangeKind, ContentKind, LearnerColor, PositionCanonicalizer,
         StandardPositionCanonicalizer, plan_import,
@@ -201,11 +200,18 @@ mod tests {
     }
 
     #[test]
-    fn enforces_the_per_game_ply_limit() {
-        let plies = "Nf3 Nf6 Ng1 Ng8 ".repeat(MAX_PLIES / 4);
-        assert!(parser().parse(&white(&format!("{plies}*"))).is_ok());
+    fn imports_a_long_mainline_with_deep_variations_and_large_route_expansion() {
+        let plies = "Nf3 Nf6 Ng1 Ng8 ".repeat(130);
+        let branches = "e5 (".repeat(75);
+        let closes = ")".repeat(75);
+        let pgn = format!("{plies}Nf3 {branches}e5{closes} *");
+        let catalog = parser().parse(&white(&pgn)).unwrap();
+        assert_eq!(catalog.lines.len(), 1);
+        assert_eq!(catalog.lines[0].targets.len(), 261);
+
+        let invalid = pgn.replacen("e5)", "e4)", 1);
         assert!(matches!(
-            parser().parse(&white(&format!("{plies}Nf3 *"))),
+            parser().parse(&white(&invalid)),
             Err(ChessError::InvalidContent(_))
         ));
     }

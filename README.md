@@ -103,8 +103,7 @@ planning. Move/FEN shape checks do not validate chess legality or calculate the
 best move. A `PositionKey` is not itself a canonicalizer.
 
 `compile_repertoire` accepts a stable repertoire ID, display name, and
-`LearnerColor`. Each game supports up to 512 plies including variations,
-and 24 levels of variation nesting. Every game starts
+`LearnerColor`. Every game starts
 from the orthodox initial position, uses standard SAN, and ends with a result
 marker. Opponent alternatives form separate routes. Competing learner moves at
 the same position produce a conflict. Move comments go into the lesson metadata

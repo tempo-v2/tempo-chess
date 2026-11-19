@@ -1,5 +1,5 @@
 //! Draft source-preserving repertoire edits from explicitly marked legal lines.
-use crate::parsed_pgn::{MAX_PLIES, invalid, parse_pgn};
+use crate::parsed_pgn::{invalid, parse_pgn};
 use crate::pgn_tokens::{PgnTokens, Token};
 use crate::standard_position_canonicalizer::{board_key, parse_position};
 use crate::standard_uci::legal_move;
@@ -109,14 +109,8 @@ pub fn draft_marked_lines(
         .transpose()?
         .unwrap_or_default();
     let prefix = anchor_prefix(&book, &board_key(&board), route, color)?;
-    if lines.is_empty()
-        || lines
-            .iter()
-            .any(|line| line.is_empty() || prefix.len() + line.len() > MAX_PLIES)
-    {
-        return Err(invalid(
-            "Mark a nonempty legal line within the PGN length limit.",
-        ));
+    if lines.is_empty() || lines.iter().any(Vec::is_empty) {
+        return Err(invalid("Mark a nonempty legal line."));
     }
     let mut prescriptions = BTreeMap::<PositionKey, String>::new();
     let mut continuations = BTreeMap::<PositionKey, BTreeSet<Vec<String>>>::new();
@@ -168,7 +162,7 @@ pub fn draft_marked_lines(
     let mut existing = BTreeSet::new();
     if !draft.pgn.is_empty() {
         for game in parse_pgn(&draft.pgn)? {
-            for route in game.routes()? {
+            for route in game.routes() {
                 existing.insert(
                     route
                         .into_iter()
@@ -205,7 +199,7 @@ fn rewrite(
 ) -> Result<(), ChessError> {
     let games = parse_pgn(source)?;
     for game in &games {
-        for route in game.routes()? {
+        for route in game.routes() {
             let moves: Vec<_> = route.iter().map(|&i| game.plies[i].uci.clone()).collect();
             for (i, index) in route.iter().enumerate() {
                 let ply = &game.plies[*index];
@@ -225,9 +219,6 @@ fn rewrite(
                 for tail in tails {
                     let mut route = moves[..i].to_vec();
                     route.extend_from_slice(tail);
-                    if route.len() > MAX_PLIES {
-                        return Err(invalid("The transposed line exceeds the PGN length limit."));
-                    }
                     additions.insert(route);
                 }
                 break;

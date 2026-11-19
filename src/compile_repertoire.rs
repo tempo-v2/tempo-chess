@@ -79,7 +79,7 @@ impl RepertoireImport<'_> {
             };
             targets.push(target);
         }
-        for route in game.routes()? {
+        for route in game.routes() {
             let mut id = format!("{}moves", self.identity);
             let mut occurrences = Vec::new();
             for index in route {

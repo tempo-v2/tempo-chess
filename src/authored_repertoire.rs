@@ -60,7 +60,7 @@ impl AuthoredRepertoire {
     pub fn parse(pgn: &str) -> Result<Self, ChessError> {
         let mut book = Self::default();
         for game in parse_pgn(pgn)? {
-            for route in game.routes()? {
+            for route in game.routes() {
                 let mut prefix = Vec::new();
                 let mut edges = Vec::new();
                 for index in route {
