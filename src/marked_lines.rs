@@ -46,22 +46,37 @@ fn anchor_prefix(
 ) -> Result<Vec<String>, ChessError> {
     let start = Board::default();
     if let Some(route) = route {
+        let authored_prefix = |prefix: &[String]| {
+            prefix.is_empty()
+                || book.routes.iter().any(|saved| {
+                    saved.len() >= prefix.len()
+                        && saved
+                            .iter()
+                            .zip(prefix)
+                            .all(|((_, played), requested)| played == requested)
+                })
+        };
         let mut board = start;
+        let mut final_gap = false;
         for (index, uci) in route.iter().enumerate() {
-            let key = board_key(&board);
-            let node = book.positions.get(&key);
-            let in_book = node.is_some_and(|node| node.replies.contains_key(uci));
-            // A response to a game gap starts just after an uncovered opponent move.
-            let gap = index + 1 == route.len()
-                && node.is_some()
-                && board.side_to_move() != color.board_color();
-            if !in_book && !gap {
-                return Err(invalid(
-                    "The starting route is outside the selected repertoire.",
-                ));
+            if index + 1 == route.len() && board.side_to_move() != color.board_color() {
+                final_gap = book.positions.get(&board_key(&board)).is_some_and(|node| {
+                    !node.replies.is_empty() && !node.replies.contains_key(uci)
+                });
             }
             let mv = legal_move(&board, uci)?;
             board.play_unchecked(mv);
+        }
+        // A Games gap supplies one observed opponent move after a verified path.
+        let required = if final_gap {
+            &route[..route.len() - 1]
+        } else {
+            route
+        };
+        if !authored_prefix(required) {
+            return Err(invalid(
+                "The starting move order is outside the selected repertoire.",
+            ));
         }
         if board_key(&board) != *anchor {
             return Err(invalid(
@@ -308,6 +323,30 @@ mod tests {
             crate::compile_repertoire(&draft.pgn, "test", "Test", LearnerColor::White, "edits")
                 .unwrap();
         assert_eq!(compiled.lines.len(), 5);
+    }
+
+    #[test]
+    fn an_anchor_route_must_follow_one_authored_path_before_an_observed_gap() {
+        let source = "1.Nf3 d5 2.g3 Nf6 3.Bg2 e6 4.O-O *\n\n1.Nf3 Nf6 2.g3 d5 3.Bg2 c5 4.O-O *";
+        let draft = |path: &str| {
+            let route = line(path);
+            let mut board = Board::default();
+            for mv in &route {
+                board.play_unchecked(legal_move(&board, mv).unwrap());
+            }
+            draft_marked_lines(
+                Some(source),
+                LearnerColor::White,
+                &board.to_string(),
+                Some(&route),
+                &[line("e1g1")],
+            )
+        };
+        // The prefix through e6 exists, and an uncovered ...g6 is a real gap
+        // after the same prefix. The ...c5 edge belongs only to the other move order.
+        assert!(draft("g1f3 d7d5 g2g3 g8f6 f1g2 e7e6").is_ok());
+        assert!(draft("g1f3 d7d5 g2g3 g8f6 f1g2 g7g6").is_ok());
+        assert!(draft("g1f3 d7d5 g2g3 g8f6 f1g2 c7c5").is_err());
     }
 
     #[test]
