@@ -24,6 +24,10 @@ impl<'a> PgnTokens<'a> {
         }
     }
 
+    pub(super) fn remaining(&self) -> &'a str {
+        self.rest
+    }
+
     pub(super) fn next(&mut self) -> Result<Option<Token<'a>>, ChessError> {
         loop {
             self.rest = self.rest.trim_start();
