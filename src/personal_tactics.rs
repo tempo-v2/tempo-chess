@@ -69,7 +69,7 @@ impl<E: TacticalEvaluator> GameDetector for PersonalTacticsDetector<E> {
         let profile = self.0.descriptor();
         DetectorDescriptor {
             id: "personal-tactics".into(),
-            revision: "3".into(),
+            revision: "4".into(),
             configuration_fingerprint: blake3::hash(
                 &serde_json::to_vec(&(profile, REPORT_BAND_CP, ONLY_MOVE_GAP_CP))
                     .expect("serializable evaluator profile"),
@@ -687,7 +687,9 @@ fn candidates(
                     vec![]
                 };
                 for (motif, front, back) in ray_pairs(&after, to, piece, own) {
-                    if !old_pairs.contains(&(motif, front, back)) {
+                    let already_threatened =
+                        previous.has(front) && old_pairs.contains(&(motif, front, back));
+                    if current.has(front) && !already_threatened {
                         push(motif, vec![front, back]);
                     }
                 }
@@ -810,6 +812,34 @@ mod tests {
         };
         let validated = validate_detected_moments(input, claims).unwrap();
         validated.into_iter().next().unwrap().tactical.unwrap()
+    }
+
+    #[test]
+    fn a_pinned_slider_cannot_create_an_off_ray_pin_or_skewer() {
+        for (rank, wrong_motif) in [("qb6", Motif::Pin), ("bq6", Motif::Skewer)] {
+            let fen = format!("4r2k/8/8/8/8/{rank}/4R3/4K3 w - - 0 1");
+            let game = input(&fen, "Re3", "fixture");
+            let engine = Grades {
+                best: "e2e3",
+                gap: 100,
+                mate: false,
+            };
+            let detector = PersonalTacticsDetector(engine);
+            let DetectionOutcome::Complete(claims) = detector.detect(&game, &Uninterrupted) else {
+                panic!("fixture should be a complete position read");
+            };
+            let findings = validate_detected_moments(&game, claims).unwrap();
+            for finding in findings {
+                let personal = finding.tactical.unwrap().personal.unwrap();
+                assert!(
+                    !personal
+                        .candidates
+                        .iter()
+                        .any(|candidate| candidate.answer.uci == "e2e3"
+                            && candidate.motif == wrong_motif)
+                );
+            }
+        }
     }
 
     #[test]
