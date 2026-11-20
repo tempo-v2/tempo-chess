@@ -54,6 +54,11 @@ pub(super) fn plan_tactic_items<'a>(
         let change = if let Some(target) = existing {
             let retained = catalog.items.get_mut(&target).expect("indexed tactic");
             let before = retained.provenance.clone();
+            let adds_context =
+                retained.opponent_lead_in.is_none() && item.opponent_lead_in.is_some();
+            if adds_context {
+                retained.opponent_lead_in.clone_from(&item.opponent_lead_in);
+            }
             retained.provenance.extend(item.provenance.iter().cloned());
             if is_source_token(&item.target.0) {
                 retained.provenance.push(item.target.0.clone());
@@ -62,7 +67,7 @@ pub(super) fn plan_tactic_items<'a>(
             retained.provenance.dedup();
             ContentChange {
                 target,
-                kind: if retained.provenance == before {
+                kind: if retained.provenance == before && !adds_context {
                     ChangeKind::Unchanged
                 } else {
                     ChangeKind::Metadata

@@ -52,12 +52,13 @@ mod played_game;
 pub use played_game::{
     DecisionAdherence, PlayedDecision, PlayedGame, RepertoireComparison, RepertoireObservation,
     compare_active_repertoires, compare_authored_repertoires, compare_played_game,
-    opponent_deviations, parse_played_games, played_deviation,
+    opponent_deviations, parse_played_games, played_deviation, played_deviation_lead_in,
 };
 mod grading_scheme;
 mod import_request;
 mod learner_color;
 mod legal_sequence_grader;
+mod opponent_lead_in;
 mod parsed_pgn;
 mod pgn_tokens;
 mod plan_import;
@@ -115,6 +116,7 @@ pub use grading_scheme::GradingScheme;
 pub use import_request::ImportRequest;
 pub use learner_color::LearnerColor;
 pub use legal_sequence_grader::{GuidedMoveError, LegalSequenceGrader, acknowledge_shown_move};
+pub use opponent_lead_in::{OpponentLeadIn, archived_tactic_lead_ins};
 pub use plan_import::plan_import;
 pub use plan_repertoire_replacement::plan_repertoire_replacement;
 pub use plan_tactic_capture::{TacticCapturePlan, plan_tactic_capture};

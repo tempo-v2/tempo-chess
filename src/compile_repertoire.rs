@@ -128,6 +128,7 @@ impl RepertoireImport<'_> {
                         }],
                     },
                     provenance: vec![self.source.to_owned()],
+                    opponent_lead_in: crate::OpponentLeadIn::from_pgn(game, index),
                     lesson: Some(RepertoireLesson {
                         san: ply.san.clone(),
                         comments: ply.comments.clone(),
