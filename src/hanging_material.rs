@@ -117,6 +117,10 @@ impl<E: TacticalEvaluator> HangingMaterialDetector<E> {
 }
 
 impl<E: TacticalEvaluator> GameDetector for HangingMaterialDetector<E> {
+    fn produces_tactical_assessments(&self) -> bool {
+        true
+    }
+
     fn descriptor(&self) -> DetectorDescriptor {
         let mut hash = blake3::Hasher::new();
         hash.update(b"tempo-chess/hanging-material/v1");
@@ -169,12 +173,10 @@ impl<E: TacticalEvaluator> GameDetector for HangingMaterialDetector<E> {
         if let Err(stop) = control.check() {
             return DetectionOutcome::Stopped(stop);
         }
-        let input = position.input;
-        let ply = position.ply;
         let occurrence = position.occurrence();
         let Some(played) = occurrence
             .next_move()
-            .filter(|_| occurrence.side_to_move() == input.learner())
+            .filter(|_| occurrence.side_to_move() == position.learner())
         else {
             return DetectionOutcome::Complete(vec![]);
         };
@@ -231,7 +233,7 @@ impl<E: TacticalEvaluator> GameDetector for HangingMaterialDetector<E> {
                 .map(|candidate| candidate.capture.answer.uci.clone())
         };
         DetectionOutcome::Complete(vec![DetectedMoment {
-            occurrence: ply,
+            occurrence: occurrence.offset(),
             code: if assessment.outcome == TacticalOutcome::WinningMate {
                 "winning_mate".into()
             } else {

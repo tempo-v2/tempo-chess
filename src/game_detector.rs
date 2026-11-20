@@ -96,6 +96,12 @@ pub trait GameDetector: Send + Sync {
         input: &GameDetectionInput,
         control: &dyn DetectionControl,
     ) -> DetectionOutcome;
+    /// Position findings carry a typed tactical assessment that the durable
+    /// game-analysis consumer can validate and retain.
+    fn produces_tactical_assessments(&self) -> bool {
+        false
+    }
+
     /// Analyze one addressed position in the validated timeline.
     fn detect_position(
         &self,
@@ -109,8 +115,8 @@ pub trait GameDetector: Send + Sync {
 /// Validated position and engine comparisons scoped to one exact occurrence.
 /// The same instance is passed to every requested detector by `scan_position`.
 pub struct PositionPass<'a> {
-    pub(crate) input: &'a GameDetectionInput,
-    pub(crate) ply: usize,
+    input: &'a GameDetectionInput,
+    ply: usize,
     pub(crate) board: &'a Board,
     pub(crate) legal: Vec<Move>,
     legal_answers: Vec<ChessAnswer>,
@@ -155,6 +161,14 @@ impl<'a> PositionPass<'a> {
 
     pub fn learner(&self) -> LearnerColor {
         self.input.learner()
+    }
+
+    /// The validated moves already played, in order. The current move is
+    /// available separately on the occurrence.
+    pub fn played_prefix(&self) -> impl ExactSizeIterator<Item = &ChessAnswer> {
+        self.input.timeline().occurrences()[..self.ply]
+            .iter()
+            .map(|occurrence| occurrence.next_move().expect("nonterminal played prefix"))
     }
 
     pub fn legal_moves(&self) -> &[ChessAnswer] {
