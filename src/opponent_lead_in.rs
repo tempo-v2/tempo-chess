@@ -34,16 +34,56 @@ impl OpponentLeadIn {
     }
 }
 
-/// Recover candidate setup moves from an archived PGN associated with a tactic.
+/// Reconcile verified predecessors that describe the same solver decision.
+/// An absent source adds no evidence. A disagreement survives subsequent merges
+/// until the authored content is explicitly replaced.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LeadInEvidence {
+    #[default]
+    Unavailable,
+    Verified(OpponentLeadIn),
+    Conflicting,
+}
+
+impl LeadInEvidence {
+    pub fn is_unavailable(&self) -> bool {
+        matches!(self, Self::Unavailable)
+    }
+
+    pub fn verified_move(&self) -> Option<&OpponentLeadIn> {
+        match self {
+            Self::Verified(lead_in) => Some(lead_in),
+            _ => None,
+        }
+    }
+
+    pub fn reconcile(&mut self, other: &Self) {
+        match (&*self, other) {
+            (_, Self::Unavailable) | (Self::Conflicting, _) => {}
+            (Self::Unavailable, other) => self.clone_from(other),
+            (current, other) if current == other => {}
+            _ => *self = Self::Conflicting,
+        }
+    }
+}
+
+impl From<Option<OpponentLeadIn>> for LeadInEvidence {
+    fn from(lead_in: Option<OpponentLeadIn>) -> Self {
+        lead_in.map(Self::Verified).unwrap_or_default()
+    }
+}
+
+/// Recover setup evidence from an archived PGN associated with a tactic.
 /// A selected range can start anywhere on a branch, so match the whole saved
-/// solution before reporting a preceding move. The caller resolves conflicts
-/// across all associated sources.
-pub fn archived_tactic_lead_ins(
+/// solution before combining its predecessors. The caller reconciles any
+/// other associated sources for this definition.
+pub fn archived_tactic_lead_in(
     pgn: &str,
     definition: &crate::ChessDefinition,
-) -> Result<Vec<OpponentLeadIn>, crate::ChessError> {
+) -> Result<LeadInEvidence, crate::ChessError> {
     let crate::ContentKind::Tactic { practice_start } = &definition.kind else {
-        return Ok(Vec::new());
+        return Ok(LeadInEvidence::Unavailable);
     };
     let solution: Vec<_> = definition
         .decisions
@@ -55,10 +95,10 @@ pub fn archived_tactic_lead_ins(
         })
         .collect();
     if solution.is_empty() {
-        return Ok(Vec::new());
+        return Ok(LeadInEvidence::Unavailable);
     }
 
-    let mut matches = Vec::new();
+    let mut evidence = LeadInEvidence::Unavailable;
     for game in crate::parsed_pgn::parse_pgn_records(pgn)?
         .into_iter()
         .flatten()
@@ -72,14 +112,13 @@ pub fn archived_tactic_lead_ins(
                         .zip(&solution)
                         .all(|(&i, uci)| game.plies[i].uci == *uci)
                     && let Some(context) = OpponentLeadIn::from_pgn(&game, index)
-                    && !matches.contains(&context)
                 {
-                    matches.push(context);
+                    evidence.reconcile(&LeadInEvidence::Verified(context));
                 }
             }
         }
     }
-    Ok(matches)
+    Ok(evidence)
 }
 
 #[cfg(test)]
@@ -104,9 +143,9 @@ mod tests {
                 .find(|item| item.definition.decisions[0].expected.uci == uci)
                 .unwrap()
         };
-        assert_eq!(item("e2e4").opponent_lead_in, None);
+        assert_eq!(item("e2e4").opponent_lead_in, LeadInEvidence::Unavailable);
         let response = item("g1f3");
-        let context = response.opponent_lead_in.as_ref().unwrap();
+        let context = response.opponent_lead_in.verified_move().unwrap();
         assert_eq!(context.uci, "c7c5");
         let solver = &response.definition.decisions[0].fen;
         assert_eq!(
@@ -128,19 +167,86 @@ mod tests {
         let preview = preview_tactic_pgn(&pgn, &[], "").unwrap();
         let catalog = preview.selected_catalog(&[0]).unwrap();
         let item = catalog.items.values().next().unwrap();
-        assert_eq!(item.opponent_lead_in.as_ref().unwrap().uci, "e2e4");
+        assert_eq!(item.opponent_lead_in.verified_move().unwrap().uci, "e2e4");
         assert_eq!(
-            archived_tactic_lead_ins(&pgn, &item.definition).unwrap(),
+            archived_tactic_lead_in(&pgn, &item.definition).unwrap(),
             item.opponent_lead_in
-                .clone()
-                .into_iter()
-                .collect::<Vec<_>>()
         );
         let changed = pgn.replace("Nf3 d6", "Nf3 Nc6");
         assert!(
-            archived_tactic_lead_ins(&changed, &item.definition)
+            archived_tactic_lead_in(&changed, &item.definition)
                 .unwrap()
-                .is_empty()
+                .is_unavailable()
         );
+    }
+    #[test]
+    fn transposed_repertoire_sources_reconcile_independently_of_order() {
+        let first = "1. Nf3 d5 2. d4 Nf6 3. c4 *";
+        let second = "1. Nf3 Nf6 2. d4 d5 3. c4 *";
+        for pgn in [
+            format!("{first}\n\n{second}"),
+            format!("{second}\n\n{first}"),
+        ] {
+            let book = compile_repertoire(&pgn, "white", "Book", LearnerColor::White, "").unwrap();
+            let target = book
+                .items
+                .values()
+                .find(|item| item.definition.decisions[0].expected.uci == "c2c4")
+                .unwrap();
+            assert_eq!(target.opponent_lead_in, LeadInEvidence::Conflicting);
+            assert_eq!(target.verified_opponent_lead_in(), None);
+        }
+
+        let repeated = compile_repertoire(
+            "1. Nf3 Nf6 2. Ng1 Ng8 3. Nf3 *",
+            "white",
+            "Book",
+            LearnerColor::White,
+            "",
+        )
+        .unwrap();
+        let target = repeated
+            .items
+            .values()
+            .find(|item| item.definition.decisions[0].expected.uci == "g1f3")
+            .unwrap();
+        assert_eq!(target.verified_opponent_lead_in().unwrap().uci, "f6g8");
+    }
+
+    #[test]
+    fn tactic_aliases_keep_conflicts_through_import_capture_and_a_later_known_source() {
+        let source = |id, before, san| {
+            let pgn = format!(
+                "[SetUp \"1\"]\n[FEN \"{before}\"]\n[TempoSetupPlies \"1\"]\n[TempoSource \"fixture\"]\n[TempoSourceId \"{id}\"]\n\n1... {san} 2. e4 *"
+            );
+            preview_tactic_pgn(&pgn, &[], "")
+                .unwrap()
+                .selected_catalog(&[0])
+                .unwrap()
+        };
+        let a = source("a", "4k1n1/8/8/8/8/8/4P3/4K3 b - - 0 1", "Nf6");
+        let b = source("b", "4k3/8/8/7n/8/8/4P3/4K3 b - - 0 1", "Nf6");
+        for (first, second) in [(&a, &b), (&b, &a)] {
+            let old = first.items.values().next().unwrap();
+            assert!(old.verified_opponent_lead_in().is_some());
+            let captured = crate::plan_tactic_capture(first, second)
+                .unwrap()
+                .content
+                .catalog;
+            let imported = crate::plan_import(first, second).unwrap().catalog;
+            for combined in [captured, imported] {
+                let saved = &combined.items[&old.target];
+                assert_eq!(saved.version, old.version);
+                assert_eq!(saved.opponent_lead_in, LeadInEvidence::Conflicting);
+                let again = crate::plan_tactic_capture(&combined, first)
+                    .unwrap()
+                    .content
+                    .catalog;
+                assert_eq!(
+                    again.items[&old.target].opponent_lead_in,
+                    LeadInEvidence::Conflicting
+                );
+            }
+        }
     }
 }

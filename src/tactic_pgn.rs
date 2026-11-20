@@ -313,7 +313,7 @@ impl TacticPgnRow {
             .map(|&index| game.plies[index].mv)
             .collect::<Vec<_>>();
         let mut item = compile_pgn_tactic(&tactic, &legal)?;
-        item.opponent_lead_in = crate::OpponentLeadIn::from_pgn(game, path.indices[0]);
+        item.opponent_lead_in = crate::OpponentLeadIn::from_pgn(game, path.indices[0]).into();
         let mut hash = blake3::Hasher::new();
         for text in [&item.target.0, &tactic.label, &tactic.solver_fen]
             .into_iter()

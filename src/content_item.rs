@@ -30,9 +30,9 @@ pub struct ContentItem {
     pub status: ContentStatus,
     pub definition: ChessDefinition,
     pub provenance: Vec<String>,
-    /// A legal opponent move into the first decision, independent of grading.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub opponent_lead_in: Option<crate::OpponentLeadIn>,
+    /// Evidence for the first opponent move, independent of grading.
+    #[serde(default, skip_serializing_if = "crate::LeadInEvidence::is_unavailable")]
+    pub opponent_lead_in: crate::LeadInEvidence,
     /// PGN context for explicit teaching. Keep it out of blind test views.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lesson: Option<RepertoireLesson>,
@@ -47,7 +47,7 @@ impl ContentItem {
     }
     /// Check retained metadata against the issued decision before using it.
     pub fn verified_opponent_lead_in(&self) -> Option<crate::OpponentLeadIn> {
-        let lead_in = self.opponent_lead_in.as_ref()?;
+        let lead_in = self.opponent_lead_in.verified_move()?;
         let solver = self.definition.decisions.first()?;
         crate::OpponentLeadIn::verified(&lead_in.before_fen, &lead_in.uci, &solver.fen)
     }

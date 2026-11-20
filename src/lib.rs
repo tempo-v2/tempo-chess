@@ -116,7 +116,7 @@ pub use grading_scheme::GradingScheme;
 pub use import_request::ImportRequest;
 pub use learner_color::LearnerColor;
 pub use legal_sequence_grader::{GuidedMoveError, LegalSequenceGrader, acknowledge_shown_move};
-pub use opponent_lead_in::{OpponentLeadIn, archived_tactic_lead_ins};
+pub use opponent_lead_in::{LeadInEvidence, OpponentLeadIn, archived_tactic_lead_in};
 pub use plan_import::plan_import;
 pub use plan_repertoire_replacement::plan_repertoire_replacement;
 pub use plan_tactic_capture::{TacticCapturePlan, plan_tactic_capture};
