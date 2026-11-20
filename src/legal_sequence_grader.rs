@@ -46,11 +46,66 @@ impl Grader for LegalSequenceGrader {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GuidedMoveError {
+    InvalidDefinition,
+    InvalidState,
+    TryShownMove,
+}
+
+/// Validate reproduction of the one shown repertoire decision in Teach or Repair.
+pub fn acknowledge_shown_move(
+    definition: &ChessDefinition,
+    state: &ChessState,
+    answer: &ChessAnswer,
+) -> Result<ChessState, GuidedMoveError> {
+    let [decision] = definition.decisions.as_slice() else {
+        return Err(GuidedMoveError::InvalidDefinition);
+    };
+    if !definition.is_repertoire() {
+        return Err(GuidedMoveError::InvalidDefinition);
+    }
+    if state.decision_index != 0 {
+        return Err(GuidedMoveError::InvalidState);
+    }
+    let board =
+        parse_position(&decision.fen, true).map_err(|_| GuidedMoveError::InvalidDefinition)?;
+    legal_move(&board, &decision.expected.uci).map_err(|_| GuidedMoveError::InvalidDefinition)?;
+    if answer != &decision.expected {
+        return Err(GuidedMoveError::TryShownMove);
+    }
+    Ok(ChessState { decision_index: 1 })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{demo_catalog, project_position};
     use tempo_types::{Grade, TargetId};
+
+    #[test]
+    fn guided_acknowledgement_accepts_only_the_legal_shown_repertoire_move() {
+        let catalog = demo_catalog();
+        let definition = &catalog.items[&TargetId::from("r1:p1")].definition;
+        let start = LegalSequenceGrader.start(definition).unwrap();
+        let shown = &definition.decisions[0].expected;
+        for incorrect in ["not-a-move", "e2e5"] {
+            assert_eq!(
+                acknowledge_shown_move(definition, &start.state, &incorrect.into()),
+                Err(GuidedMoveError::TryShownMove)
+            );
+        }
+        assert_eq!(
+            acknowledge_shown_move(definition, &start.state, shown),
+            Ok(ChessState { decision_index: 1 })
+        );
+        let mut invalid = definition.clone();
+        invalid.decisions[0].expected = "e2e5".into();
+        assert_eq!(
+            acknowledge_shown_move(&invalid, &start.state, &"e2e5".into()),
+            Err(GuidedMoveError::InvalidDefinition)
+        );
+    }
 
     #[test]
     fn malformed_and_illegal_moves_do_not_enter_the_miss_path() {

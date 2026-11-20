@@ -180,3 +180,21 @@ definition. It returns authoritative FEN, learner orientation, check status
 and all legal standard UCI moves when ready. A locked, incomplete view retains
 its current decision board. A completed view reconstructs the board after the
 last prescribed move and any trailing reply.
+
+### Read-only game detection
+
+Use `parse_played_games` and `PlayedGame::timeline` to project both sides of a
+legal mainline, from the starting board through the final board. The full FEN
+retains the parsed starting counters and the board library's replay counters.
+The position key is for transpositions, while the offset addresses a particular
+occurrence. Comments, annotations, result tags and variations stay outside the
+detector input.
+
+The application resolves the learner color, builds a `GameDetectionInput`, and
+calls the registered `GameDetector` with its cooperative `DetectionControl`.
+The input fingerprint covers the complete occurrence sequence and perspective.
+Validate a complete result with `validate_detected_moments` before publishing
+it. Chess checks anchors, claimed pieces and legal candidate moves, supplies FEN
+and SAN, and rejects duplicate semantic findings. The host scopes local finding
+fingerprints to its game, input and registered detector. Findings are read-only
+observations.
