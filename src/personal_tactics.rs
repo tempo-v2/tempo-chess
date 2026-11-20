@@ -487,6 +487,18 @@ fn answer(board: &Board, mv: Move) -> ChessAnswer {
     }
 }
 
+// Ordered by the tactical relationship, independent of engine scores and wire tags.
+fn piece_rank(piece: Piece) -> u8 {
+    match piece {
+        Piece::Pawn => 0,
+        Piece::Knight => 1,
+        Piece::Bishop => 2,
+        Piece::Rook => 3,
+        Piece::Queen => 4,
+        Piece::King => 5,
+    }
+}
+
 fn ray_pairs(
     board: &Board,
     from: Square,
@@ -501,8 +513,8 @@ fn ray_pairs(
             if !cozy_chess::get_between_rays(from, far).has(near) {
                 continue;
             }
-            let near_role = PieceRole::from_piece(board.piece_on(near).unwrap()) as u8;
-            let far_role = PieceRole::from_piece(board.piece_on(far).unwrap()) as u8;
+            let near_role = piece_rank(board.piece_on(near).expect("front target"));
+            let far_role = piece_rank(board.piece_on(far).expect("rear target"));
             if near_role < far_role {
                 pairs.push((Motif::Pin, near, far));
             }
@@ -747,7 +759,7 @@ mod tests {
                             } else {
                                 EvaluationScore::Centipawns(100)
                             }
-                        } else if uci == "e5f3" || uci == "f7g8" {
+                        } else if ["e5f3", "f7g8", "g1g2"].contains(&uci.as_str()) {
                             EvaluationScore::Centipawns(0)
                         } else {
                             EvaluationScore::Centipawns(100 - self.gap)
@@ -815,6 +827,26 @@ mod tests {
     }
 
     #[test]
+    fn the_reporting_band_includes_thirty_and_preserves_ambiguous_misses() {
+        let game = input("7k/n7/8/4q3/3P4/8/8/R5K1 w - - 0 1", "Kg2", "Learner");
+        for (gap, expected) in [
+            (30, TacticalOutcome::UnclearMiss),
+            (31, TacticalOutcome::MissedTactic),
+        ] {
+            let assessed = detection(
+                &game,
+                Grades {
+                    best: "d4e5",
+                    gap,
+                    mate: false,
+                },
+            );
+            assert_eq!(assessed.outcome, expected);
+            assert!(assessed.personal.unwrap().puzzle.is_none());
+        }
+    }
+
+    #[test]
     fn a_mate_in_two_accepts_any_legal_mating_finish_and_replays_that_finish() {
         let fen = "8/5Q2/k2K4/8/8/8/8/8 w - - 0 1";
         let input = input(fen, "Qg8", "Andy");
@@ -868,6 +900,111 @@ mod tests {
                 .played_mate
                 .is_none()
         );
+    }
+
+    #[test]
+    fn all_piece_roles_can_fork_and_absolute_pins_restrict_threats() {
+        for (fen, san, uci, role) in [
+            (
+                "7k/8/2q1r3/8/3P4/8/8/K7 w - - 0 1",
+                "d5",
+                "d4d5",
+                PieceRole::Pawn,
+            ),
+            (
+                "1k6/4q3/8/4N3/8/8/8/5K2 w - - 0 1",
+                "Nc6+",
+                "e5c6",
+                PieceRole::Knight,
+            ),
+            (
+                "7k/8/8/1q3r2/8/8/4B3/K7 w - - 0 1",
+                "Bd3",
+                "e2d3",
+                PieceRole::Bishop,
+            ),
+            (
+                "7k/8/8/8/2q3r1/8/8/3R3K w - - 0 1",
+                "Rd4",
+                "d1d4",
+                PieceRole::Rook,
+            ),
+            (
+                "7k/8/8/8/2b5/r7/4Q3/7K w - - 0 1",
+                "Qd3",
+                "e2d3",
+                PieceRole::Queen,
+            ),
+            (
+                "7k/8/8/2n1n3/8/3K4/8/8 w - - 0 1",
+                "Kd4",
+                "d3d4",
+                PieceRole::King,
+            ),
+        ] {
+            let game = input(fen, san, "Learner");
+            let pass = PositionPass::new(&game, 0).unwrap();
+            assert!(
+                candidates(&pass, || Ok(()))
+                    .unwrap()
+                    .iter()
+                    .any(|c| c.motif == Motif::Fork
+                        && c.answer.uci == uci
+                        && c.attackers.len() == 1
+                        && c.attackers[0].role == role),
+                "{role:?}"
+            );
+        }
+        let game = input("4r2k/8/8/1b4n1/4R3/8/8/4K3 w - - 0 1", "Re5", "Learner");
+        let pass = PositionPass::new(&game, 0).unwrap();
+        assert!(
+            !candidates(&pass, || Ok(()))
+                .unwrap()
+                .iter()
+                .any(|c| c.motif == Motif::Fork && c.answer.uci == "e4e5")
+        );
+    }
+
+    #[test]
+    fn pin_and_skewer_use_bishop_over_knight_and_discoveries_keep_the_revealed_piece() {
+        for (fen, san, uci, motif) in [
+            (
+                "7k/8/3b4/8/3n4/8/8/R6K w - - 0 1",
+                "Rd1",
+                "a1d1",
+                Motif::Pin,
+            ),
+            (
+                "7k/8/3n4/8/3b4/8/8/R6K w - - 0 1",
+                "Rd1",
+                "a1d1",
+                Motif::Skewer,
+            ),
+            (
+                "7k/q7/8/8/8/8/N7/R6K w - - 0 1",
+                "Nb4",
+                "a2b4",
+                Motif::DiscoveredAttack,
+            ),
+            (
+                "k7/8/8/8/8/8/N7/R6K w - - 0 1",
+                "Nb4+",
+                "a2b4",
+                Motif::DiscoveredCheck,
+            ),
+        ] {
+            let game = input(fen, san, "Learner");
+            let pass = PositionPass::new(&game, 0).unwrap();
+            assert!(
+                candidates(&pass, || Ok(()))
+                    .unwrap()
+                    .iter()
+                    .any(|c| c.motif == motif
+                        && c.answer.uci == uci
+                        && c.attackers[0].role == PieceRole::Rook),
+                "{motif:?}"
+            );
+        }
     }
 
     #[test]
