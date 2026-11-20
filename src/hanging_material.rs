@@ -22,6 +22,17 @@ pub enum TacticalKind {
     PersonalTactics,
 }
 
+impl TacticalKind {
+    /// Durable assessment-kind code used by the repository projections.
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::HangingMaterial => "hanging_material",
+            Self::WinningMate => "winning_mate",
+            Self::PersonalTactics => "personal_tactics",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HangingCapture {
     pub answer: ChessAnswer,

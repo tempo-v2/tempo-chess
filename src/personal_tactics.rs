@@ -69,7 +69,7 @@ impl<E: TacticalEvaluator> GameDetector for PersonalTacticsDetector<E> {
         let profile = self.0.descriptor();
         DetectorDescriptor {
             id: "personal-tactics".into(),
-            revision: "1".into(),
+            revision: "2".into(),
             configuration_fingerprint: blake3::hash(
                 &serde_json::to_vec(&(profile, REPORT_BAND_CP, ONLY_MOVE_GAP_CP))
                     .expect("serializable evaluator profile"),
@@ -82,6 +82,10 @@ impl<E: TacticalEvaluator> GameDetector for PersonalTacticsDetector<E> {
 
     fn produces_tactical_assessments(&self) -> bool {
         true
+    }
+
+    fn tactical_evidence_format(&self) -> Option<crate::TacticalEvidenceFormat> {
+        Some(crate::TacticalEvidenceFormat::CompleteDecision)
     }
 
     fn detect(
@@ -280,8 +284,23 @@ fn classification(
         .filter(|c| accepted.contains(&c.answer))
         .map(|c| &c.answer.uci)
         .collect();
+    let best_score = evaluation
+        .roots
+        .iter()
+        .map(|root| root.score)
+        .max_by(|left, right| score_order(*left, *right));
     if qualifying.is_empty() {
         TacticalOutcome::InferiorTactic
+    } else if matches!(best_score, Some(EvaluationScore::Mate(_))) {
+        if qualifying.contains(&played.uci) {
+            TacticalOutcome::PlayedTactic
+        } else if accepted.contains(played)
+            || matches!(played_score, Some(EvaluationScore::Mate(distance)) if distance > 0)
+        {
+            TacticalOutcome::GoodAlternative
+        } else {
+            TacticalOutcome::MissedTactic
+        }
     } else if qualifying.len() > 1 {
         if accepted.contains(played) {
             TacticalOutcome::UnclearPlay
@@ -787,6 +806,68 @@ mod tests {
         };
         let validated = validate_detected_moments(input, claims).unwrap();
         validated.into_iter().next().unwrap().tactical.unwrap()
+    }
+
+    #[test]
+    fn longer_forced_mates_are_comparable_without_a_centipawn_ambiguity() {
+        struct LongerMates;
+        impl TacticalEvaluator for LongerMates {
+            fn descriptor(&self) -> EvaluationProvenance {
+                Grades {
+                    best: "d4e5",
+                    gap: 75,
+                    mate: false,
+                }
+                .descriptor()
+            }
+            fn evaluate(
+                &self,
+                request: &TacticalEvaluationRequest,
+                _: &dyn DetectionControl,
+            ) -> Result<RootEvaluation, EvaluationFailure> {
+                Ok(RootEvaluation {
+                    provenance: self.descriptor(),
+                    depth: 12,
+                    nodes: 10,
+                    roots: request
+                        .legal_moves
+                        .iter()
+                        .map(|uci| RootScore {
+                            uci: uci.clone(),
+                            bound: ScoreBound::Exact,
+                            score: match uci.as_str() {
+                                "d4e5" | "a1a7" => EvaluationScore::Mate(3),
+                                "g1g2" => EvaluationScore::Mate(5),
+                                _ => EvaluationScore::Centipawns(0),
+                            },
+                        })
+                        .collect(),
+                })
+            }
+        }
+        let fen = "7k/n7/8/4q3/3P4/8/8/R5K1 w - - 0 1";
+        for (played, outcome) in [
+            ("Kg2", TacticalOutcome::GoodAlternative),
+            ("dxe5", TacticalOutcome::PlayedTactic),
+            ("Kh1", TacticalOutcome::MissedTactic),
+        ] {
+            let input = input(fen, played, "fixture");
+            let detector = PersonalTacticsDetector(LongerMates);
+            let DetectionOutcome::Complete(claims) = detector.detect(&input, &Uninterrupted) else {
+                panic!("fixture should be a complete position read");
+            };
+            let mut findings = validate_detected_moments(&input, claims).unwrap();
+            let tactical = findings.pop().unwrap().tactical.unwrap();
+            assert_eq!(tactical.outcome, outcome);
+            let personal = tactical.personal.unwrap();
+            assert!(
+                personal
+                    .candidates
+                    .iter()
+                    .all(|candidate| !is_mate(candidate.motif))
+            );
+            assert!(personal.puzzle.is_none());
+        }
     }
 
     #[test]

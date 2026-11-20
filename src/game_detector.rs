@@ -87,6 +87,13 @@ impl DetectorDescriptor {
     }
 }
 
+/// The durable evidence contract a position detector implements.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TacticalEvidenceFormat {
+    LegacyFindings,
+    CompleteDecision,
+}
+
 /// Inject a detector at the host composition boundary. Implementations must
 /// check control between occurrences and during any nontrivial inner loops.
 pub trait GameDetector: Send + Sync {
@@ -100,6 +107,12 @@ pub trait GameDetector: Send + Sync {
     /// game-analysis consumer can validate and retain.
     fn produces_tactical_assessments(&self) -> bool {
         false
+    }
+
+    /// Complete decisions cover all motifs before the host accepts a turn.
+    fn tactical_evidence_format(&self) -> Option<TacticalEvidenceFormat> {
+        self.produces_tactical_assessments()
+            .then_some(TacticalEvidenceFormat::LegacyFindings)
     }
 
     /// Analyze one addressed position in the validated timeline.
@@ -254,16 +267,22 @@ pub fn scan_position<'a>(
         return DetectionOutcome::Failed("Invalid position occurrence.".into());
     };
     let mut findings = Vec::new();
+    let detectors: Vec<_> = detectors.into_iter().collect();
+    let complete_decision = detectors.iter().any(|detector| {
+        detector.tactical_evidence_format() == Some(TacticalEvidenceFormat::CompleteDecision)
+    });
     let mut detectors = detectors.into_iter();
     while let Some(detector) = detectors.next() {
         match detector.detect_position(&pass, control) {
             DetectionOutcome::Complete(moments) => {
-                if let Some(mate) = moments.iter().find(|moment| {
-                    moment
-                        .tactical
-                        .as_ref()
-                        .is_some_and(|assessment| validate_winning_mate(&pass, assessment))
-                }) {
+                if !complete_decision
+                    && let Some(mate) = moments.iter().find(|moment| {
+                        moment
+                            .tactical
+                            .as_ref()
+                            .is_some_and(|assessment| validate_winning_mate(&pass, assessment))
+                    })
+                {
                     return DetectionOutcome::Complete(vec![PositionFinding {
                         producer: detector.descriptor().identity(),
                         moment: mate.clone(),
