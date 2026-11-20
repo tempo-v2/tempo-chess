@@ -1,7 +1,9 @@
 //! One concrete detector using the existing game-detector contract.
 
 use crate::standard_position_canonicalizer::parse_position;
-use crate::tactical_evaluation::{checked_evaluation, complete_evaluation, evaluation_request};
+use crate::tactical_evaluation::{
+    accepted_roots, checked_evaluation, complete_evaluation, evaluation_request, score_order,
+};
 use crate::{
     BoardSubject, ChessAnswer, ChessError, DetectedMoment, DetectionControl, DetectionOutcome,
     DetectorDescriptor, EvaluationProvenance, EvaluationScore, EvaluationStatus,
@@ -10,7 +12,7 @@ use crate::{
 };
 use cozy_chess::{Board, Move, Piece, Square, util::display_uci_move};
 use serde::{Deserialize, Serialize};
-use std::{cmp::Ordering, collections::BTreeMap};
+use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -320,45 +322,6 @@ fn legal_moves(board: &Board) -> Vec<Move> {
     legal
 }
 
-fn score_order(left: EvaluationScore, right: EvaluationScore) -> Ordering {
-    use EvaluationScore::*;
-    match (left, right) {
-        (Centipawns(a), Centipawns(b)) => a.cmp(&b),
-        (Mate(a), Mate(b)) if a.signum() == b.signum() => b.cmp(&a),
-        (Mate(a), Mate(b)) => a.cmp(&b),
-        (Mate(a), Centipawns(_)) => a.cmp(&0),
-        (Centipawns(_), Mate(b)) => 0.cmp(&b),
-    }
-}
-
-fn accepted_roots(status: &EvaluationStatus, tolerance: i32) -> Vec<ChessAnswer> {
-    let EvaluationStatus::Complete { evaluation } = status else {
-        return Vec::new();
-    };
-    let Some(best) = evaluation
-        .roots
-        .iter()
-        .map(|r| r.score)
-        .max_by(|a, b| score_order(*a, *b))
-    else {
-        return Vec::new();
-    };
-    let mut accepted = evaluation
-        .roots
-        .iter()
-        .filter(|root| match (best, root.score) {
-            (EvaluationScore::Centipawns(best), EvaluationScore::Centipawns(score)) => {
-                i64::from(best) - i64::from(score) <= i64::from(tolerance)
-            }
-            (EvaluationScore::Mate(best), EvaluationScore::Mate(score)) => best == score,
-            _ => false,
-        })
-        .map(|r| ChessAnswer { uci: r.uci.clone() })
-        .collect::<Vec<_>>();
-    accepted.sort_by(|a, b| a.uci.cmp(&b.uci));
-    accepted
-}
-
 fn assess(
     captures: Vec<HangingCapture>,
     played: ChessAnswer,
@@ -522,9 +485,7 @@ pub(crate) fn validate_tactical_assessment(
 
 fn explanation(outcome: TacticalOutcome) -> &'static str {
     match outcome {
-        TacticalOutcome::WinningMate => {
-            "Stockfish found a forced mate. Other analyses were skipped."
-        }
+        TacticalOutcome::WinningMate => "Stockfish found a forced mate.",
         TacticalOutcome::TookGoodCapture => {
             "You took a hanging unit with a best or equivalent move."
         }

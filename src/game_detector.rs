@@ -1,7 +1,7 @@
 //! A read-only detector receives one mainline and the app-resolved learner color.
 
 use crate::standard_uci::legal_move;
-use crate::tactical_evaluation::{checked_evaluation, evaluation_request};
+use crate::tactical_evaluation::{checked_evaluation, evaluation_request, validate_winning_mate};
 use crate::{ChessAnswer, LearnerColor, PlayedGameTimeline, PositionKey, TacticalAssessment};
 use cozy_chess::util::display_san_move;
 use cozy_chess::{Board, Move, Piece, Square};
@@ -201,6 +201,10 @@ impl<'a> PositionPass<'a> {
 
     /// Compare all legal roots against the unchanged game prefix, sharing the
     /// result only with the same evaluator profile in this position pass.
+    pub(crate) fn engine_request(&self) -> crate::TacticalEvaluationRequest {
+        evaluation_request(self.input, self.ply, &self.legal)
+    }
+
     pub fn compare(
         &self,
         evaluator: &dyn crate::TacticalEvaluator,
@@ -216,7 +220,7 @@ impl<'a> PositionPass<'a> {
         {
             return cached.clone();
         }
-        let request = evaluation_request(self.input, self.ply, &self.legal);
+        let request = self.engine_request();
         let result = checked_evaluation(evaluator, &request, control);
         self.comparisons
             .borrow_mut()
@@ -229,6 +233,7 @@ impl<'a> PositionPass<'a> {
 pub struct PositionFinding {
     pub producer: DetectorIdentity,
     pub moment: DetectedMoment,
+    pub skipped: Vec<DetectorIdentity>,
 }
 
 /// One shared board and search context for the entire requested detector set.
@@ -242,23 +247,29 @@ pub fn scan_position<'a>(
         return DetectionOutcome::Failed("Invalid position occurrence.".into());
     };
     let mut findings = Vec::new();
-    for detector in detectors {
+    let mut detectors = detectors.into_iter();
+    while let Some(detector) = detectors.next() {
         match detector.detect_position(&pass, control) {
             DetectionOutcome::Complete(moments) => {
                 if let Some(mate) = moments.iter().find(|moment| {
-                    moment.tactical.as_ref().is_some_and(|assessment| {
-                        assessment.outcome == crate::TacticalOutcome::WinningMate
-                    })
+                    moment
+                        .tactical
+                        .as_ref()
+                        .is_some_and(|assessment| validate_winning_mate(&pass, assessment))
                 }) {
                     return DetectionOutcome::Complete(vec![PositionFinding {
                         producer: detector.descriptor().identity(),
                         moment: mate.clone(),
+                        skipped: detectors
+                            .map(|detector| detector.descriptor().identity())
+                            .collect(),
                     }]);
                 }
                 let producer = detector.descriptor().identity();
                 findings.extend(moments.into_iter().map(|moment| PositionFinding {
                     producer: producer.clone(),
                     moment,
+                    skipped: vec![],
                 }));
             }
             DetectionOutcome::Unsupported => return DetectionOutcome::Unsupported,
@@ -436,14 +447,23 @@ fn validate_moment(
     if finding.code.trim().is_empty() {
         return Err(InvalidCode);
     }
-    if finding.tactical.as_ref().is_some_and(|assessment| {
-        !crate::hanging_material::validate_tactical_assessment(
-            input,
-            finding.occurrence,
-            assessment,
-        )
-    }) {
-        return Err(InvalidTacticalAssessment);
+    if let Some(assessment) = finding.tactical.as_ref() {
+        let valid = match assessment.kind {
+            crate::TacticalKind::HangingMaterial => {
+                crate::hanging_material::validate_tactical_assessment(
+                    input,
+                    finding.occurrence,
+                    assessment,
+                )
+            }
+            crate::TacticalKind::WinningMate => {
+                let pass = PositionPass::new(input, finding.occurrence).ok_or(InvalidOccurrence)?;
+                validate_winning_mate(&pass, assessment)
+            }
+        };
+        if !valid {
+            return Err(InvalidTacticalAssessment);
+        }
     }
     let board = &anchor.board;
     finding

@@ -1,9 +1,12 @@
 //! Engine evidence supplied by the host, without process or storage dependencies.
 
-use crate::{DetectionControl, DetectionStop, GameDetectionInput};
+use crate::{
+    ChessAnswer, DetectionControl, DetectionStop, GameDetectionInput, PositionPass,
+    TacticalAssessment, TacticalKind, TacticalOutcome,
+};
 use cozy_chess::{Move, util::display_uci_move};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::{cmp::Ordering, collections::BTreeSet};
 
 /// Stable evaluation identity. Changing search settings changes the fingerprint.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,4 +162,77 @@ pub(crate) fn complete_evaluation(
             .roots
             .iter()
             .all(|r| r.bound == ScoreBound::Exact && !matches!(r.score, EvaluationScore::Mate(0)))
+}
+
+pub(crate) fn score_order(left: EvaluationScore, right: EvaluationScore) -> Ordering {
+    use EvaluationScore::*;
+    match (left, right) {
+        (Centipawns(a), Centipawns(b)) => a.cmp(&b),
+        (Mate(a), Mate(b)) if a.signum() == b.signum() => b.cmp(&a),
+        (Mate(a), Mate(b)) => a.cmp(&b),
+        (Mate(a), Centipawns(_)) => a.cmp(&0),
+        (Centipawns(_), Mate(b)) => 0.cmp(&b),
+    }
+}
+
+pub(crate) fn accepted_roots(status: &EvaluationStatus, tolerance: i32) -> Vec<ChessAnswer> {
+    let EvaluationStatus::Complete { evaluation } = status else {
+        return Vec::new();
+    };
+    let Some(best) = evaluation
+        .roots
+        .iter()
+        .map(|r| r.score)
+        .max_by(|a, b| score_order(*a, *b))
+    else {
+        return Vec::new();
+    };
+    let mut accepted = evaluation
+        .roots
+        .iter()
+        .filter(|root| match (best, root.score) {
+            (EvaluationScore::Centipawns(best), EvaluationScore::Centipawns(score)) => {
+                i64::from(best) - i64::from(score) <= i64::from(tolerance)
+            }
+            (EvaluationScore::Mate(best), EvaluationScore::Mate(score)) => best == score,
+            _ => false,
+        })
+        .map(|r| ChessAnswer { uci: r.uci.clone() })
+        .collect::<Vec<_>>();
+    accepted.sort_by(|a, b| a.uci.cmp(&b.uci));
+    accepted
+}
+
+/// A completed position evaluation can establish mate on any legal board.
+pub(crate) fn validate_winning_mate(
+    position: &PositionPass<'_>,
+    assessment: &TacticalAssessment,
+) -> bool {
+    let EvaluationStatus::Complete { evaluation } = &assessment.analysis else {
+        return false;
+    };
+    if assessment.kind != TacticalKind::WinningMate
+        || assessment.outcome != TacticalOutcome::WinningMate
+        || position.occurrence().next_move() != Some(&assessment.played)
+        || position.occurrence().side_to_move() != position.learner()
+        || !assessment.candidates.is_empty()
+        || assessment.standalone_analysis.is_some()
+        || assessment.puzzle.is_some()
+        || !complete_evaluation(
+            &position.engine_request(),
+            evaluation,
+            &evaluation.provenance,
+        )
+    {
+        return false;
+    }
+    let accepted = accepted_roots(&assessment.analysis, 0);
+    !accepted.is_empty()
+        && assessment.accepted_moves == accepted
+        && accepted.iter().all(|answer| {
+            evaluation.roots.iter().any(|root| {
+                root.uci == answer.uci
+                    && matches!(root.score, EvaluationScore::Mate(distance) if distance > 0)
+            })
+        })
 }
