@@ -198,3 +198,51 @@ it. Chess checks anchors, claimed pieces and legal candidate moves, supplies FEN
 and SAN, and rejects duplicate semantic findings. The host scopes local finding
 fingerprints to its game, input and registered detector. Findings are read-only
 observations.
+
+### Hanging material and generated tactics
+
+`HangingMaterialDetector<E>` implements the same `GameDetector`; `E` implements
+`TacticalEvaluator`. The host owns engine processes and supplies all-root scores.
+Chess owns legal candidates, quality interpretation and the resulting typed
+`TacticalAssessment`. Neither detector nor puzzle planner has a database handle.
+
+| Decision | Rule, owner and basis |
+| --- | --- |
+| Candidate capture | Chess checks legal captures of opposing nonking units, including pawns, for which no legal immediate reply recaptures the capturing unit. Pins, checks, king safety, x-rays, en passant and capture promotions use legal board moves. This first detector deliberately excludes defended exchanges and longer combinations. |
+| Capture quality | Compare every legal root at a complete exact engine iteration from the learner-to-move perspective. The initial configurable equivalence band is 30 centipawns. Mate scores retain their signed type and distance; they are never converted into arbitrary centipawns. Missing, bounded, mismatched or failed evidence is uncertain. |
+| Observed outcome | Record a taken good capture, a good alternative, a missed good capture, an inferior capture taken/declined, or uncertainty. These are observations of play, not claims about recognition. The terminal board without a played move is excluded. |
+| Puzzle answer | The user's single-answer policy chooses the highest-scored qualifying capture, with UCI breaking a score tie. Other available captures remain in the analysis. Existing exact-sequence grading applies without a new grading scheme. |
+| Standalone validity | Before confirming a miss, re-evaluate the normalized standalone puzzle board and require the selected capture to remain best or equivalent. A disagreement or incomplete second search remains uncertain and proposes no puzzle. |
+| Content identity | `plan_tactical_puzzle` uses the existing legal tactic compiler and capture planner. Equal canonical board and selected UCI response reuse a target and version while adding provenance. This planner does not create an assessment, introduction or queue priority. |
+
+```mermaid
+flowchart TD
+    A["Actual learner decision"] --> B["Legal capture candidates"]
+    B --> C["Complete engine comparison"]
+    C --> D{"Good capture missed?"}
+    D -->|No| E["Typed comparison finding"]
+    D -->|Yes| F["Standalone verification"]
+    F -->|Compatible| G["Single-answer puzzle proposal"]
+    F -->|Incomplete or different| E
+```
+
+`TacticalEvaluationRequest` carries the actual start FEN and played prefix, the
+current FEN and all legal root moves. This preserves available repetition context
+for game analysis. Standalone verification has an empty prefix and normalized
+counters. The retained timeline still has the documented board-library counter
+limits; evaluation adapters must reject unsupported context rather than invent
+history. `RootEvaluation` records engine identity, configuration, depth, nodes,
+typed root scores and bounds. These are bounded search results, not mathematical
+proof that no better move exists at a greater depth.
+
+`DetectedMoment.tactical` is optional. Old findings omit it on the wire and keep
+their earlier semantic fingerprints. When present, validation re-establishes the
+candidate set, exact-root coverage and all derived classifications. Labels and
+explanations do not determine the outcome. The host must retain a separate stable
+game-occurrence identity for durable counting and effects: a versioned finding
+fingerprint is not an exactly-once training receipt.
+
+The public consumer tests in [hanging_material.rs](tests/hanging_material.rs)
+cover legal edge cases, Black, multiple captures, the selected single answer,
+best alternatives, engine uncertainty, standalone disagreement, truthful typed
+validation, and reuse through the unchanged exact tactic grader.

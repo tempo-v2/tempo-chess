@@ -12,7 +12,9 @@ use serde::{Deserialize, Serialize};
 ///
 /// Quarantine does not erase a target or make its definition structurally invalid.
 /// It is an availability decision, separate from whether the learner got a move
-/// right.
+/// right. An engine-validated answer passed to [`crate::plan_tactical_puzzle`]
+/// can resolve that import conflict for its exact retained target without
+/// changing the other quarantined definitions or the target's content version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContentStatus {
