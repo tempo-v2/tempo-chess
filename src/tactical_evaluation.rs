@@ -1,7 +1,9 @@
 //! Engine evidence supplied by the host, without process or storage dependencies.
 
-use crate::{DetectionControl, DetectionStop};
+use crate::{DetectionControl, DetectionStop, GameDetectionInput};
+use cozy_chess::{Move, util::display_uci_move};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 /// Stable evaluation identity. Changing search settings changes the fingerprint.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,4 +82,81 @@ pub enum EvaluationStatus {
     Unavailable,
     Incomplete { evaluation: Option<RootEvaluation> },
     Failed,
+}
+
+pub(crate) fn checked_evaluation(
+    evaluator: &dyn TacticalEvaluator,
+    request: &TacticalEvaluationRequest,
+    control: &dyn DetectionControl,
+) -> Result<EvaluationStatus, DetectionStop> {
+    control.check()?;
+    let result = evaluator.evaluate(request, control);
+    control.check()?;
+    Ok(match result {
+        Ok(evaluation) if complete_evaluation(request, &evaluation, &evaluator.descriptor()) => {
+            EvaluationStatus::Complete { evaluation }
+        }
+        Ok(evaluation) => EvaluationStatus::Incomplete {
+            evaluation: Some(evaluation),
+        },
+        Err(EvaluationFailure::Unavailable) => EvaluationStatus::Unavailable,
+        Err(EvaluationFailure::Incomplete) => EvaluationStatus::Incomplete { evaluation: None },
+        Err(EvaluationFailure::Failed) => EvaluationStatus::Failed,
+        Err(EvaluationFailure::Stopped(reason)) => return Err(reason),
+    })
+}
+
+pub(crate) fn evaluation_request(
+    input: &GameDetectionInput,
+    offset: usize,
+    legal: &[Move],
+) -> TacticalEvaluationRequest {
+    let timeline = input.timeline().occurrences();
+    let anchor = &timeline[offset];
+    TacticalEvaluationRequest {
+        start_fen: timeline[0].fen().into(),
+        moves: timeline[..offset]
+            .iter()
+            .map(|position| {
+                position
+                    .next_move()
+                    .expect("nonterminal prefix")
+                    .uci
+                    .clone()
+            })
+            .collect(),
+        fen: anchor.fen().into(),
+        legal_moves: legal
+            .iter()
+            .map(|&mv| display_uci_move(&anchor.board, mv).to_string())
+            .collect(),
+    }
+}
+
+pub(crate) fn complete_evaluation(
+    request: &TacticalEvaluationRequest,
+    evaluation: &RootEvaluation,
+    provenance: &EvaluationProvenance,
+) -> bool {
+    evaluation.provenance == *provenance
+        && [
+            &provenance.engine,
+            &provenance.engine_version,
+            &provenance.configuration_fingerprint,
+        ]
+        .iter()
+        .all(|s| !s.trim().is_empty())
+        && evaluation.depth > 0
+        && evaluation.nodes > 0
+        && evaluation.roots.len() == request.legal_moves.len()
+        && evaluation
+            .roots
+            .iter()
+            .map(|r| &r.uci)
+            .collect::<BTreeSet<_>>()
+            == request.legal_moves.iter().collect::<BTreeSet<_>>()
+        && evaluation
+            .roots
+            .iter()
+            .all(|r| r.bound == ScoreBound::Exact && !matches!(r.score, EvaluationScore::Mate(0)))
 }

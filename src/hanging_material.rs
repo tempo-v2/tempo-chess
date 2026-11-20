@@ -1,18 +1,16 @@
 //! One concrete detector using the existing game-detector contract.
 
 use crate::standard_position_canonicalizer::parse_position;
+use crate::tactical_evaluation::{checked_evaluation, complete_evaluation, evaluation_request};
 use crate::{
     BoardSubject, ChessAnswer, ChessError, DetectedMoment, DetectionControl, DetectionOutcome,
-    DetectionStop, DetectorDescriptor, EvaluationFailure, EvaluationProvenance, EvaluationScore,
-    EvaluationStatus, GameDetectionInput, GameDetector, LearnerColor, PieceRole, PositionPass,
-    RootEvaluation, ScoreBound, TacticalEvaluationRequest, TacticalEvaluator,
+    DetectorDescriptor, EvaluationProvenance, EvaluationScore, EvaluationStatus,
+    GameDetectionInput, GameDetector, LearnerColor, PieceRole, PositionPass,
+    TacticalEvaluationRequest, TacticalEvaluator,
 };
 use cozy_chess::{Board, Move, Piece, Square, util::display_uci_move};
 use serde::{Deserialize, Serialize};
-use std::{
-    cmp::Ordering,
-    collections::{BTreeMap, BTreeSet},
-};
+use std::{cmp::Ordering, collections::BTreeMap};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -116,28 +114,6 @@ impl<E: TacticalEvaluator> HangingMaterialDetector<E> {
             config,
         })
     }
-
-    fn evaluate(
-        &self,
-        request: &TacticalEvaluationRequest,
-        control: &dyn DetectionControl,
-    ) -> Result<EvaluationStatus, DetectionStop> {
-        control.check()?;
-        let result = self.evaluator.evaluate(request, control);
-        control.check()?;
-        Ok(match result {
-            Ok(evaluation) if complete_evaluation(request, &evaluation, &self.provenance) => {
-                EvaluationStatus::Complete { evaluation }
-            }
-            Ok(evaluation) => EvaluationStatus::Incomplete {
-                evaluation: Some(evaluation),
-            },
-            Err(EvaluationFailure::Unavailable) => EvaluationStatus::Unavailable,
-            Err(EvaluationFailure::Incomplete) => EvaluationStatus::Incomplete { evaluation: None },
-            Err(EvaluationFailure::Failed) => EvaluationStatus::Failed,
-            Err(EvaluationFailure::Stopped(reason)) => return Err(reason),
-        })
-    }
 }
 
 impl<E: TacticalEvaluator> GameDetector for HangingMaterialDetector<E> {
@@ -174,8 +150,12 @@ impl<E: TacticalEvaluator> GameDetector for HangingMaterialDetector<E> {
                 [self as &dyn GameDetector],
                 control,
             ) {
-                DetectionOutcome::Complete(mut moments) => findings.append(&mut moments),
-                other => return other,
+                DetectionOutcome::Complete(moments) => {
+                    findings.extend(moments.into_iter().map(|finding| finding.moment))
+                }
+                DetectionOutcome::Unsupported => return DetectionOutcome::Unsupported,
+                DetectionOutcome::Stopped(reason) => return DetectionOutcome::Stopped(reason),
+                DetectionOutcome::Failed(error) => return DetectionOutcome::Failed(error),
             }
         }
         DetectionOutcome::Complete(findings)
@@ -202,9 +182,7 @@ impl<E: TacticalEvaluator> GameDetector for HangingMaterialDetector<E> {
         if captures.is_empty() {
             return DetectionOutcome::Complete(vec![]);
         }
-        let request = evaluation_request(input, ply, &position.legal);
-        let analysis = match position.compare(&self.provenance, || self.evaluate(&request, control))
-        {
+        let analysis = match position.compare(&self.evaluator, control) {
             Ok(analysis) => analysis,
             Err(stop) => return DetectionOutcome::Stopped(stop),
         };
@@ -220,9 +198,13 @@ impl<E: TacticalEvaluator> GameDetector for HangingMaterialDetector<E> {
                 start_fen: fen.clone(),
                 fen: fen.clone(),
                 moves: Vec::new(),
-                legal_moves: request.legal_moves,
+                legal_moves: position
+                    .legal_moves()
+                    .iter()
+                    .map(|answer| answer.uci.clone())
+                    .collect(),
             };
-            let analysis = match self.evaluate(&standalone, control) {
+            let analysis = match checked_evaluation(&self.evaluator, &standalone, control) {
                 Ok(analysis) => analysis,
                 Err(stop) => return DetectionOutcome::Stopped(stop),
             };
@@ -327,33 +309,6 @@ fn capture_target(board: &Board, mv: Move) -> Option<(Square, PieceRole)> {
     Some((square, role))
 }
 
-fn evaluation_request(
-    input: &GameDetectionInput,
-    offset: usize,
-    legal: &[Move],
-) -> TacticalEvaluationRequest {
-    let timeline = input.timeline().occurrences();
-    let anchor = &timeline[offset];
-    TacticalEvaluationRequest {
-        start_fen: timeline[0].fen().into(),
-        moves: timeline[..offset]
-            .iter()
-            .map(|position| {
-                position
-                    .next_move()
-                    .expect("nonterminal prefix")
-                    .uci
-                    .clone()
-            })
-            .collect(),
-        fen: anchor.fen().into(),
-        legal_moves: legal
-            .iter()
-            .map(|&mv| display_uci_move(&anchor.board, mv).to_string())
-            .collect(),
-    }
-}
-
 fn legal_moves(board: &Board) -> Vec<Move> {
     let mut legal = Vec::new();
     board.generate_moves(|moves| {
@@ -361,34 +316,6 @@ fn legal_moves(board: &Board) -> Vec<Move> {
         false
     });
     legal
-}
-
-fn complete_evaluation(
-    request: &TacticalEvaluationRequest,
-    evaluation: &RootEvaluation,
-    provenance: &EvaluationProvenance,
-) -> bool {
-    evaluation.provenance == *provenance
-        && [
-            &provenance.engine,
-            &provenance.engine_version,
-            &provenance.configuration_fingerprint,
-        ]
-        .iter()
-        .all(|s| !s.trim().is_empty())
-        && evaluation.depth > 0
-        && evaluation.nodes > 0
-        && evaluation.roots.len() == request.legal_moves.len()
-        && evaluation
-            .roots
-            .iter()
-            .map(|r| &r.uci)
-            .collect::<BTreeSet<_>>()
-            == request.legal_moves.iter().collect::<BTreeSet<_>>()
-        && evaluation
-            .roots
-            .iter()
-            .all(|r| r.bound == ScoreBound::Exact && !matches!(r.score, EvaluationScore::Mate(0)))
 }
 
 fn score_order(left: EvaluationScore, right: EvaluationScore) -> Ordering {
@@ -644,17 +571,8 @@ mod position_tests {
             })
             .collect();
         assert!(!mating_moves.is_empty());
-        let profile = EvaluationProvenance {
-            engine: "Fixture".into(),
-            engine_version: "1".into(),
-            configuration_fingerprint: "same".into(),
-        };
-        let score = position.compare(&profile, || {
-            Ok(EvaluationStatus::Incomplete { evaluation: None })
-        });
-        assert_eq!(
-            score,
-            position.compare(&profile, || panic!("duplicate evaluation"))
-        );
+        assert_eq!(position.legal_moves().len(), position.legal.len());
+        assert!(position.move_is_mate("f7f8"));
+        assert_eq!(position.piece_at("a7").unwrap().role, PieceRole::Pawn);
     }
 }

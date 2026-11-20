@@ -1,6 +1,7 @@
 //! A read-only detector receives one mainline and the app-resolved learner color.
 
 use crate::standard_uci::legal_move;
+use crate::tactical_evaluation::{checked_evaluation, evaluation_request};
 use crate::{ChessAnswer, LearnerColor, PlayedGameTimeline, PositionKey, TacticalAssessment};
 use cozy_chess::util::display_san_move;
 use cozy_chess::{Board, Move, Piece, Square};
@@ -58,7 +59,23 @@ pub struct DetectorDescriptor {
     pub label: String,
 }
 
+/// Durable detector identity. Presentation labels do not identify work or evidence.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct DetectorIdentity {
+    pub id: String,
+    pub revision: String,
+    pub configuration_fingerprint: String,
+}
+
 impl DetectorDescriptor {
+    pub fn identity(&self) -> DetectorIdentity {
+        DetectorIdentity {
+            id: self.id.clone(),
+            revision: self.revision.clone(),
+            configuration_fingerprint: self.configuration_fingerprint.clone(),
+        }
+    }
+
     pub fn validate(&self) -> Result<(), DetectionValidationError> {
         if [&self.id, &self.revision, &self.configuration_fingerprint]
             .iter()
@@ -96,6 +113,7 @@ pub struct PositionPass<'a> {
     pub(crate) ply: usize,
     pub(crate) board: &'a Board,
     pub(crate) legal: Vec<Move>,
+    legal_answers: Vec<ChessAnswer>,
     comparisons: RefCell<
         Vec<(
             crate::EvaluationProvenance,
@@ -116,6 +134,16 @@ impl<'a> PositionPass<'a> {
             input,
             ply,
             board,
+            legal_answers: legal
+                .iter()
+                .map(|&mv| {
+                    ChessAnswer::from(
+                        cozy_chess::util::display_uci_move(board, mv)
+                            .to_string()
+                            .as_str(),
+                    )
+                })
+                .collect(),
             legal,
             comparisons: RefCell::new(Vec::new()),
         })
@@ -125,25 +153,68 @@ impl<'a> PositionPass<'a> {
         &self.input.timeline().occurrences()[self.ply]
     }
 
+    pub fn learner(&self) -> LearnerColor {
+        self.input.learner()
+    }
+
+    pub fn legal_moves(&self) -> &[ChessAnswer] {
+        &self.legal_answers
+    }
+
+    pub fn piece_at(&self, square: &str) -> Option<BoardSubject> {
+        let address: Square = square.parse().ok()?;
+        let role = PieceRole::from_piece(self.board.piece_on(address)?);
+        let color = LearnerColor::from_board(self.board.color_on(address)?);
+        Some(BoardSubject {
+            square: address.to_string(),
+            role,
+            color,
+        })
+    }
+
+    pub fn move_is_mate(&self, uci: &str) -> bool {
+        let Some(index) = self
+            .legal_answers
+            .iter()
+            .position(|answer| answer.uci == uci)
+        else {
+            return false;
+        };
+        let mut after = self.board.clone();
+        after.play_unchecked(self.legal[index]);
+        after.status() == cozy_chess::GameStatus::Won
+    }
+
+    /// Compare all legal roots against the unchanged game prefix, sharing the
+    /// result only with the same evaluator profile in this position pass.
     pub fn compare(
         &self,
-        profile: &crate::EvaluationProvenance,
-        evaluate: impl FnOnce() -> Result<crate::EvaluationStatus, DetectionStop>,
+        evaluator: &dyn crate::TacticalEvaluator,
+        control: &dyn DetectionControl,
     ) -> Result<crate::EvaluationStatus, DetectionStop> {
+        control.check()?;
+        let profile = evaluator.descriptor();
         if let Some((_, cached)) = self
             .comparisons
             .borrow()
             .iter()
-            .find(|(key, _)| key == profile)
+            .find(|(key, _)| key == &profile)
         {
             return cached.clone();
         }
-        let result = evaluate();
+        let request = evaluation_request(self.input, self.ply, &self.legal);
+        let result = checked_evaluation(evaluator, &request, control);
         self.comparisons
             .borrow_mut()
-            .push((profile.clone(), result.clone()));
+            .push((profile, result.clone()));
         result
     }
+}
+
+/// A detector claim paired with its producer before the host validates it.
+pub struct PositionFinding {
+    pub producer: DetectorIdentity,
+    pub moment: DetectedMoment,
 }
 
 /// One shared board and search context for the entire requested detector set.
@@ -152,7 +223,7 @@ pub fn scan_position<'a>(
     ply: usize,
     detectors: impl IntoIterator<Item = &'a dyn GameDetector>,
     control: &dyn DetectionControl,
-) -> DetectionOutcome {
+) -> DetectionOutcome<PositionFinding> {
     let Some(pass) = PositionPass::new(input, ply) else {
         return DetectionOutcome::Failed("Invalid position occurrence.".into());
     };
@@ -165,11 +236,20 @@ pub fn scan_position<'a>(
                         assessment.outcome == crate::TacticalOutcome::WinningMate
                     })
                 }) {
-                    return DetectionOutcome::Complete(vec![mate.clone()]);
+                    return DetectionOutcome::Complete(vec![PositionFinding {
+                        producer: detector.descriptor().identity(),
+                        moment: mate.clone(),
+                    }]);
                 }
-                findings.extend(moments);
+                let producer = detector.descriptor().identity();
+                findings.extend(moments.into_iter().map(|moment| PositionFinding {
+                    producer: producer.clone(),
+                    moment,
+                }));
             }
-            other => return other,
+            DetectionOutcome::Unsupported => return DetectionOutcome::Unsupported,
+            DetectionOutcome::Stopped(reason) => return DetectionOutcome::Stopped(reason),
+            DetectionOutcome::Failed(error) => return DetectionOutcome::Failed(error),
         }
     }
     DetectionOutcome::Complete(findings)
@@ -191,8 +271,8 @@ pub enum DetectionStop {
 
 /// Only Complete carries findings, including the valid empty report.
 #[derive(Debug, PartialEq, Eq)]
-pub enum DetectionOutcome {
-    Complete(Vec<DetectedMoment>),
+pub enum DetectionOutcome<F = DetectedMoment> {
+    Complete(Vec<F>),
     Unsupported,
     Stopped(DetectionStop),
     Failed(String),
@@ -211,6 +291,17 @@ pub enum PieceRole {
 }
 
 impl PieceRole {
+    fn from_piece(piece: Piece) -> Self {
+        match piece {
+            Piece::Pawn => Self::Pawn,
+            Piece::Knight => Self::Knight,
+            Piece::Bishop => Self::Bishop,
+            Piece::Rook => Self::Rook,
+            Piece::Queen => Self::Queen,
+            Piece::King => Self::King,
+        }
+    }
+
     fn piece(self) -> Piece {
         match self {
             Self::Pawn => Piece::Pawn,
