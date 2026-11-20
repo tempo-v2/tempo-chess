@@ -19,6 +19,18 @@ use std::collections::BTreeMap;
 pub enum TacticalKind {
     HangingMaterial,
     WinningMate,
+    PersonalTactics,
+}
+
+impl TacticalKind {
+    /// Durable assessment-kind code used by the repository projections.
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::HangingMaterial => "hanging_material",
+            Self::WinningMate => "winning_mate",
+            Self::PersonalTactics => "personal_tactics",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,6 +65,11 @@ pub enum TacticalOutcome {
     DeclinedInferiorCapture,
     Uncertain,
     WinningMate,
+    PlayedTactic,
+    MissedTactic,
+    UnclearPlay,
+    UnclearMiss,
+    InferiorTactic,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,6 +92,8 @@ pub struct TacticalAssessment {
     pub accepted_moves: Vec<ChessAnswer>,
     pub puzzle: Option<TacticalPuzzleSolution>,
     pub equivalence_cp: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub personal: Option<crate::PersonalTacticsEvidence>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -258,7 +277,7 @@ pub fn hanging_captures(fen: &str) -> Result<Vec<HangingCapture>, ChessError> {
     Ok(captures_on_board(&board, &legal))
 }
 
-fn captures_on_board(board: &Board, legal: &[Move]) -> Vec<HangingCapture> {
+pub(crate) fn captures_on_board(board: &Board, legal: &[Move]) -> Vec<HangingCapture> {
     let mut captures = Vec::new();
     for &mv in legal {
         let Some((square, role)) = capture_target(board, mv) else {
@@ -348,6 +367,7 @@ fn assess(
             accepted_moves,
             puzzle: None,
             equivalence_cp,
+            personal: None,
         };
     }
     let candidates = captures
@@ -395,6 +415,7 @@ fn assess(
         accepted_moves,
         puzzle: None,
         equivalence_cp,
+        personal: None,
     }
 }
 
@@ -504,6 +525,7 @@ fn explanation(outcome: TacticalOutcome) -> &'static str {
         TacticalOutcome::Uncertain => {
             "A capture candidate was found, but its quality is not fully established."
         }
+        _ => unreachable!("personal outcomes use their detector"),
     }
 }
 

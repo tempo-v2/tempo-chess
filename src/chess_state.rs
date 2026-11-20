@@ -16,6 +16,17 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChessState {
     pub decision_index: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub played_mate: Option<crate::ChessAnswer>,
+}
+
+impl ChessState {
+    pub fn at(decision_index: usize) -> Self {
+        Self {
+            decision_index,
+            played_mate: None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -30,7 +41,7 @@ mod tests {
         let catalog = demo_catalog();
         let definition = &catalog.items[&TargetId::from("t1")].definition;
         // A persisted attempt has already completed the first learner move.
-        let state = ChessState { decision_index: 1 };
+        let state = ChessState::at(1);
         let miss = ExactSequenceGrader
             .answer(definition, &state, &"e2e4".into())
             .unwrap();

@@ -218,6 +218,7 @@ pub(crate) fn validate_winning_mate(
         || !assessment.candidates.is_empty()
         || assessment.standalone_analysis.is_some()
         || assessment.puzzle.is_some()
+        || assessment.personal.is_some()
         || !complete_evaluation(
             &position.engine_request(),
             evaluation,

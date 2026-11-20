@@ -458,8 +458,7 @@ mod tests {
         for item in catalog.items.values() {
             assert!(matches!(item.definition.kind, ContentKind::Tactic { .. }));
             assert_eq!(item.definition.decisions[0].autoplay.len(), 1);
-            let done = project_position(&item.definition, &ChessState { decision_index: 1 }, false)
-                .unwrap();
+            let done = project_position(&item.definition, &ChessState::at(1), false).unwrap();
             assert_eq!(done.learner_color, LearnerColor::White);
             assert!(done.display_fen.contains(" w "));
         }

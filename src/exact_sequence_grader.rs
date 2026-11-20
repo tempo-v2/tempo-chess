@@ -44,7 +44,7 @@ impl Grader for ExactSequenceGrader {
             .validate()
             .map_err(|e| GradingError::InvalidDefinition(e.to_string()))?;
         Ok(GraderStart {
-            state: ChessState { decision_index: 0 },
+            state: ChessState::at(0),
             prompt: prompt(definition, 0),
         })
     }
@@ -70,9 +70,7 @@ impl Grader for ExactSequenceGrader {
         let next_index = state.decision_index + usize::from(correct);
         let complete = next_index == definition.decisions.len();
         Ok(GradeStep {
-            state: ChessState {
-                decision_index: next_index,
-            },
+            state: ChessState::at(next_index),
             prompt: if complete {
                 None
             } else {

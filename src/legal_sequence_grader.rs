@@ -40,8 +40,24 @@ impl Grader for LegalSequenceGrader {
             .ok_or_else(|| GradingError::InvalidState("decision is outside the exercise".into()))?;
         let board = parse_position(&decision.fen, true)
             .map_err(|error| GradingError::InvalidDefinition(error.to_string()))?;
-        legal_move(&board, &answer.uci)
+        let mv = legal_move(&board, &answer.uci)
             .map_err(|error| GradingError::InvalidAnswer(error.to_string()))?;
+        if definition.scheme == crate::GradingScheme::ForcedMateV1 {
+            let mut after = board;
+            after.play_unchecked(mv);
+            if after.status() == cozy_chess::GameStatus::Won {
+                let mut step = ExactSequenceGrader.answer(definition, state, &decision.expected)?;
+                step.complete = true;
+                step.prompt = None;
+                step.assessment = Some(tempo_types::Grade::Good);
+                step.feedback.autoplay.clear();
+                step.state = ChessState {
+                    decision_index: definition.decisions.len(),
+                    played_mate: Some(answer.clone()),
+                };
+                return Ok(step);
+            }
+        }
         ExactSequenceGrader.answer(definition, state, answer)
     }
 }
@@ -74,7 +90,7 @@ pub fn acknowledge_shown_move(
     if answer != &decision.expected {
         return Err(GuidedMoveError::TryShownMove);
     }
-    Ok(ChessState { decision_index: 1 })
+    Ok(ChessState::at(1))
 }
 
 #[cfg(test)]
@@ -97,7 +113,7 @@ mod tests {
         }
         assert_eq!(
             acknowledge_shown_move(definition, &start.state, shown),
-            Ok(ChessState { decision_index: 1 })
+            Ok(ChessState::at(1))
         );
         let mut invalid = definition.clone();
         invalid.decisions[0].expected = "e2e5".into();

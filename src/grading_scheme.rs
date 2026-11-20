@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum GradingScheme {
     ExactSequenceV1,
+    ForcedMateV1,
 }
 
 #[cfg(test)]
@@ -32,7 +33,9 @@ mod tests {
         let catalog = demo_catalog();
         let definition = &catalog.items[&TargetId::from("t1")].definition;
         let start = match definition.scheme {
-            GradingScheme::ExactSequenceV1 => ExactSequenceGrader.start(definition),
+            GradingScheme::ExactSequenceV1 | GradingScheme::ForcedMateV1 => {
+                ExactSequenceGrader.start(definition)
+            }
         }
         .unwrap();
         assert_eq!(start.prompt.decision_count, definition.decisions.len());
