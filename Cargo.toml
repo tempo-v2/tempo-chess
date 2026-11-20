@@ -13,6 +13,4 @@ cozy-chess = "=0.3.4"
 tempo-types = "=0.1.0"
 tempo-study = "=0.1.0"
 serde = { version = "1", features = ["derive"] }
-
-[dev-dependencies]
 serde_json = "1"

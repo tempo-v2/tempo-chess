@@ -41,6 +41,7 @@ impl PlayedGameTimeline {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PositionOccurrence {
     offset: usize,
+    pub(crate) board: Board,
     fen: String,
     position: PositionKey,
     side_to_move: LearnerColor,
@@ -51,6 +52,7 @@ impl PositionOccurrence {
     fn new(offset: usize, board: &Board, next_move: Option<ChessAnswer>) -> Self {
         Self {
             offset,
+            board: board.clone(),
             fen: board.to_string(),
             position: board_key(board),
             side_to_move: LearnerColor::from_board(board.side_to_move()),
