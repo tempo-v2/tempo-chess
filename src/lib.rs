@@ -39,11 +39,24 @@ pub use authored_repertoire::{
     legal_model_moves,
 };
 mod game_detector;
+mod hanging_material;
+mod tactical_evaluation;
+mod tactical_puzzle;
 pub use game_detector::{
     BoardSubject, DetectedMoment, DetectionControl, DetectionOutcome, DetectionStop,
     DetectionValidationError, DetectorDescriptor, GameDetectionInput, GameDetector, PieceRole,
     ValidatedMoment, validate_detected_moments,
 };
+pub use hanging_material::{
+    CaptureQuality, HangingCapture, HangingCaptureAssessment, HangingMaterialConfig,
+    HangingMaterialDetector, TacticalAssessment, TacticalKind, TacticalOutcome,
+    TacticalPuzzleSolution, hanging_captures,
+};
+pub use tactical_evaluation::{
+    EvaluationFailure, EvaluationProvenance, EvaluationScore, EvaluationStatus, RootEvaluation,
+    RootScore, ScoreBound, TacticalEvaluationRequest, TacticalEvaluator,
+};
+pub use tactical_puzzle::{TacticalPuzzlePlan, plan_tactical_puzzle};
 mod played_game_timeline;
 pub use played_game_timeline::{PlayedGameTimeline, PositionOccurrence};
 mod played_opening;

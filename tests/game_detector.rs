@@ -130,6 +130,7 @@ impl GameDetector for ExternalDetector {
                         subjects: vec![],
                         candidate_move: Some(actual.uci.clone()),
                         explanation: "The learner played a move from this board.".into(),
+                        tactical: None,
                     });
                 }
             }
@@ -219,6 +220,7 @@ fn game_detector_rejects_invalid_claims_and_normalizes_finding_identity() {
         ],
         candidate_move: Some("g1f3".into()),
         explanation: "original wording".into(),
+        tactical: None,
     };
     let mut equivalent = valid.clone();
     equivalent.subjects.reverse();
