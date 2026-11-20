@@ -1,10 +1,10 @@
 //! A read-only detector receives one mainline and the app-resolved learner color.
 
 use crate::standard_uci::legal_move;
-use crate::{ChessAnswer, LearnerColor, PlayedGameTimeline, PositionKey};
+use crate::{ChessAnswer, LearnerColor, PlayedGameTimeline, PositionKey, TacticalAssessment};
 use cozy_chess::util::display_san_move;
 use cozy_chess::{Board, Piece, Square};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 /// Immutable chess inputs to a detector. The host resolves the learner before
@@ -100,7 +100,7 @@ pub enum DetectionOutcome {
     Failed(String),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[repr(u8)]
 pub enum PieceRole {
@@ -126,7 +126,7 @@ impl PieceRole {
 }
 
 /// A claim about the occupant of an orthodox square at the finding's anchor.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BoardSubject {
     pub square: String,
     pub role: PieceRole,
@@ -142,11 +142,12 @@ pub struct DetectedMoment {
     pub subjects: Vec<BoardSubject>,
     pub candidate_move: Option<String>,
     pub explanation: String,
+    pub tactical: Option<TacticalAssessment>,
 }
 
 /// Checked claims and board facts supplied by Chess. SAN is derived from the
 /// actual anchor and the checked standard UCI candidate.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ValidatedMoment {
     pub occurrence: usize,
     pub code: String,
@@ -157,6 +158,8 @@ pub struct ValidatedMoment {
     pub fen: String,
     pub position: PositionKey,
     pub side_to_move: LearnerColor,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tactical: Option<TacticalAssessment>,
 }
 
 impl ValidatedMoment {
@@ -173,6 +176,13 @@ impl ValidatedMoment {
             hash.update(&[subject.role as u8, color_code(subject.color)]);
         }
         hash_candidate(&mut hash, self.candidate_move.as_ref());
+        if let Some(tactical) = &self.tactical {
+            hash.update(b"tactical/v1");
+            hash_text(
+                &mut hash,
+                &serde_json::to_string(tactical).expect("typed tactical evidence"),
+            );
+        }
         hash.finalize().to_hex().to_string()
     }
 }
@@ -185,6 +195,7 @@ pub enum DetectionValidationError {
     InvalidSubject,
     InvalidCandidateMove,
     DuplicateFinding,
+    InvalidTacticalAssessment,
 }
 
 /// Validate the entire Complete report before it can be published. An invalid
@@ -220,6 +231,15 @@ fn validate_moment(
     if finding.code.trim().is_empty() {
         return Err(InvalidCode);
     }
+    if finding.tactical.as_ref().is_some_and(|assessment| {
+        !crate::hanging_material::validate_tactical_assessment(
+            input,
+            finding.occurrence,
+            assessment,
+        )
+    }) {
+        return Err(InvalidTacticalAssessment);
+    }
     let board = Board::from_fen(anchor.fen(), false).expect("Chess generated the occurrence FEN");
     finding
         .subjects
@@ -253,6 +273,7 @@ fn validate_moment(
         fen: anchor.fen().into(),
         position: anchor.position().clone(),
         side_to_move: anchor.side_to_move(),
+        tactical: finding.tactical,
     })
 }
 
