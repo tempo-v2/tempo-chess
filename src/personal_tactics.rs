@@ -69,7 +69,7 @@ impl<E: TacticalEvaluator> GameDetector for PersonalTacticsDetector<E> {
         let profile = self.0.descriptor();
         DetectorDescriptor {
             id: "personal-tactics".into(),
-            revision: "2".into(),
+            revision: "3".into(),
             configuration_fingerprint: blake3::hash(
                 &serde_json::to_vec(&(profile, REPORT_BAND_CP, ONLY_MOVE_GAP_CP))
                     .expect("serializable evaluator profile"),
@@ -630,6 +630,7 @@ fn candidates(
         }
         let enemy = after.colors(!own);
         let king = after.king(!own);
+        let vacated = board.occupied() & !after.occupied();
         let next_pins = absolute_pins(&after, own);
         let mut changed_attacks = Vec::new();
         for to in after.colors(own) {
@@ -665,6 +666,9 @@ fn candidates(
             }
             if old == to && slider(piece) {
                 for target in new {
+                    if (cozy_chess::get_between_rays(to, target) & vacated).is_empty() {
+                        continue;
+                    }
                     push(
                         if target == king {
                             Motif::DiscoveredCheck
@@ -806,6 +810,21 @@ mod tests {
         };
         let validated = validate_detected_moments(input, claims).unwrap();
         validated.into_iter().next().unwrap().tactical.unwrap()
+    }
+
+    #[test]
+    fn lifting_a_pin_without_vacating_the_attack_ray_is_not_a_discovery() {
+        let fen = "4r2k/8/8/1q6/8/8/4B3/4K3 w - - 0 1";
+        let game = input(fen, "Kd1", "fixture");
+        let pass = PositionPass::new(&game, 0).unwrap();
+        let discovered = candidates(&pass, || Ok(())).unwrap();
+        assert!(!discovered.iter().any(|candidate| {
+            candidate.answer.uci == "e1d1"
+                && matches!(
+                    candidate.motif,
+                    Motif::DiscoveredAttack | Motif::DiscoveredCheck
+                )
+        }));
     }
 
     #[test]
