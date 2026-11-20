@@ -38,6 +38,16 @@ pub use authored_repertoire::{
     AuthoredRepertoire, DepartureKind, GapDraft, OpponentGap, RepertoireAdherence,
     legal_model_moves,
 };
+mod game_detector;
+pub use game_detector::{
+    BoardSubject, DetectedMoment, DetectionControl, DetectionOutcome, DetectionStop,
+    DetectionValidationError, DetectorDescriptor, GameDetectionInput, GameDetector, PieceRole,
+    ValidatedMoment, validate_detected_moments,
+};
+mod played_game_timeline;
+pub use played_game_timeline::{PlayedGameTimeline, PositionOccurrence};
+mod played_opening;
+pub use played_opening::{PlayedOpening, played_opening};
 mod played_game;
 pub use played_game::{
     DecisionAdherence, PlayedDecision, PlayedGame, RepertoireComparison, RepertoireObservation,
@@ -64,8 +74,8 @@ mod repertoire_pgn_parser;
 mod standard_position_canonicalizer;
 mod structure;
 pub use structure::{
-    NearbyPosition, NearbyRepertoirePositions, NearbyResponse, SavedRepertoireResponse, nearby_repertoire_positions,
-    structural_neighbors,
+    NearbyPosition, NearbyRepertoirePositions, NearbyResponse, SavedRepertoireResponse,
+    nearby_repertoire_positions, structural_neighbors,
 };
 mod standard_uci;
 mod tactic_pgn;
@@ -104,7 +114,7 @@ pub use game_comparator::GameComparator;
 pub use grading_scheme::GradingScheme;
 pub use import_request::ImportRequest;
 pub use learner_color::LearnerColor;
-pub use legal_sequence_grader::LegalSequenceGrader;
+pub use legal_sequence_grader::{GuidedMoveError, LegalSequenceGrader, acknowledge_shown_move};
 pub use plan_import::plan_import;
 pub use plan_repertoire_replacement::plan_repertoire_replacement;
 pub use plan_tactic_capture::{TacticCapturePlan, plan_tactic_capture};
