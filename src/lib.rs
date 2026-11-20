@@ -45,7 +45,7 @@ mod tactical_puzzle;
 pub use game_detector::{
     BoardSubject, DetectedMoment, DetectionControl, DetectionOutcome, DetectionStop,
     DetectionValidationError, DetectorDescriptor, GameDetectionInput, GameDetector, PieceRole,
-    ValidatedMoment, validate_detected_moments,
+    PositionPass, ValidatedMoment, scan_position, validate_detected_moments,
 };
 pub use hanging_material::{
     CaptureQuality, HangingCapture, HangingCaptureAssessment, HangingMaterialConfig,

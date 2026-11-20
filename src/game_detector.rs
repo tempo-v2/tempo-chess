@@ -3,8 +3,9 @@
 use crate::standard_uci::legal_move;
 use crate::{ChessAnswer, LearnerColor, PlayedGameTimeline, PositionKey, TacticalAssessment};
 use cozy_chess::util::display_san_move;
-use cozy_chess::{Piece, Square};
+use cozy_chess::{Board, Move, Piece, Square};
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
 use std::collections::BTreeSet;
 
 /// Immutable chess inputs to a detector. The host resolves the learner before
@@ -81,12 +82,97 @@ pub trait GameDetector: Send + Sync {
     /// Analyze one addressed position in the validated timeline.
     fn detect_position(
         &self,
-        _input: &GameDetectionInput,
-        _ply: usize,
+        _position: &PositionPass<'_>,
         _control: &dyn DetectionControl,
     ) -> DetectionOutcome {
         DetectionOutcome::Unsupported
     }
+}
+
+/// Validated position and engine comparisons scoped to one exact occurrence.
+/// The same instance is passed to every requested detector by `scan_position`.
+pub struct PositionPass<'a> {
+    pub(crate) input: &'a GameDetectionInput,
+    pub(crate) ply: usize,
+    pub(crate) board: &'a Board,
+    pub(crate) legal: Vec<Move>,
+    comparisons: RefCell<
+        Vec<(
+            crate::EvaluationProvenance,
+            Result<crate::EvaluationStatus, DetectionStop>,
+        )>,
+    >,
+}
+
+impl<'a> PositionPass<'a> {
+    pub(crate) fn new(input: &'a GameDetectionInput, ply: usize) -> Option<Self> {
+        let board = &input.timeline().occurrences().get(ply)?.board;
+        let mut legal = Vec::new();
+        board.generate_moves(|moves| {
+            legal.extend(moves);
+            false
+        });
+        Some(Self {
+            input,
+            ply,
+            board,
+            legal,
+            comparisons: RefCell::new(Vec::new()),
+        })
+    }
+
+    pub fn occurrence(&self) -> &crate::PositionOccurrence {
+        &self.input.timeline().occurrences()[self.ply]
+    }
+
+    pub fn compare(
+        &self,
+        profile: &crate::EvaluationProvenance,
+        evaluate: impl FnOnce() -> Result<crate::EvaluationStatus, DetectionStop>,
+    ) -> Result<crate::EvaluationStatus, DetectionStop> {
+        if let Some((_, cached)) = self
+            .comparisons
+            .borrow()
+            .iter()
+            .find(|(key, _)| key == profile)
+        {
+            return cached.clone();
+        }
+        let result = evaluate();
+        self.comparisons
+            .borrow_mut()
+            .push((profile.clone(), result.clone()));
+        result
+    }
+}
+
+/// One shared board and search context for the entire requested detector set.
+pub fn scan_position<'a>(
+    input: &GameDetectionInput,
+    ply: usize,
+    detectors: impl IntoIterator<Item = &'a dyn GameDetector>,
+    control: &dyn DetectionControl,
+) -> DetectionOutcome {
+    let Some(pass) = PositionPass::new(input, ply) else {
+        return DetectionOutcome::Failed("Invalid position occurrence.".into());
+    };
+    let mut findings = Vec::new();
+    for detector in detectors {
+        match detector.detect_position(&pass, control) {
+            DetectionOutcome::Complete(moments) => {
+                if let Some(mate) = moments.iter().find(|moment| {
+                    moment.tactical.as_ref().is_some_and(|assessment| {
+                        assessment.outcome == crate::TacticalOutcome::WinningMate
+                    })
+                }) {
+                    return DetectionOutcome::Complete(vec![mate.clone()]);
+                }
+                findings.extend(moments);
+            }
+            other => return other,
+        }
+    }
+    DetectionOutcome::Complete(findings)
 }
 
 /// The host communicates cancellation and budget exhaustion through this port.

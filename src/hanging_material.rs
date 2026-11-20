@@ -4,13 +4,12 @@ use crate::standard_position_canonicalizer::parse_position;
 use crate::{
     BoardSubject, ChessAnswer, ChessError, DetectedMoment, DetectionControl, DetectionOutcome,
     DetectionStop, DetectorDescriptor, EvaluationFailure, EvaluationProvenance, EvaluationScore,
-    EvaluationStatus, GameDetectionInput, GameDetector, LearnerColor, PieceRole, RootEvaluation,
-    ScoreBound, TacticalEvaluationRequest, TacticalEvaluator,
+    EvaluationStatus, GameDetectionInput, GameDetector, LearnerColor, PieceRole, PositionPass,
+    RootEvaluation, ScoreBound, TacticalEvaluationRequest, TacticalEvaluator,
 };
 use cozy_chess::{Board, Move, Piece, Square, util::display_uci_move};
 use serde::{Deserialize, Serialize};
 use std::{
-    cell::OnceCell,
     cmp::Ordering,
     collections::{BTreeMap, BTreeSet},
 };
@@ -86,31 +85,6 @@ pub struct HangingMaterialConfig {
 impl Default for HangingMaterialConfig {
     fn default() -> Self {
         Self { equivalence_cp: 30 }
-    }
-}
-
-/// One immutable board and its legal moves, shared by the checks at a position.
-/// The single game-history evaluation is separate from any puzzle-context check.
-struct PositionPass<'a> {
-    board: &'a Board,
-    legal: Vec<Move>,
-    comparison: OnceCell<Result<EvaluationStatus, DetectionStop>>,
-}
-
-impl<'a> PositionPass<'a> {
-    fn new(board: &'a Board) -> Self {
-        Self {
-            board,
-            legal: legal_moves(board),
-            comparison: OnceCell::new(),
-        }
-    }
-
-    fn compare(
-        &self,
-        evaluate: impl FnOnce() -> Result<EvaluationStatus, DetectionStop>,
-    ) -> Result<EvaluationStatus, DetectionStop> {
-        self.comparison.get_or_init(evaluate).clone()
     }
 }
 
@@ -194,7 +168,12 @@ impl<E: TacticalEvaluator> GameDetector for HangingMaterialDetector<E> {
     ) -> DetectionOutcome {
         let mut findings = Vec::new();
         for occurrence in input.timeline().occurrences() {
-            match self.detect_position(input, occurrence.offset(), control) {
+            match crate::scan_position(
+                input,
+                occurrence.offset(),
+                [self as &dyn GameDetector],
+                control,
+            ) {
                 DetectionOutcome::Complete(mut moments) => findings.append(&mut moments),
                 other => return other,
             }
@@ -204,29 +183,28 @@ impl<E: TacticalEvaluator> GameDetector for HangingMaterialDetector<E> {
 
     fn detect_position(
         &self,
-        input: &GameDetectionInput,
-        ply: usize,
+        position: &PositionPass<'_>,
         control: &dyn DetectionControl,
     ) -> DetectionOutcome {
         if let Err(stop) = control.check() {
             return DetectionOutcome::Stopped(stop);
         }
-        let Some(occurrence) = input.timeline().occurrences().get(ply) else {
-            return DetectionOutcome::Failed("Invalid position occurrence.".into());
-        };
+        let input = position.input;
+        let ply = position.ply;
+        let occurrence = position.occurrence();
         let Some(played) = occurrence
             .next_move()
             .filter(|_| occurrence.side_to_move() == input.learner())
         else {
             return DetectionOutcome::Complete(vec![]);
         };
-        let position = PositionPass::new(&occurrence.board);
         let captures = captures_on_board(position.board, &position.legal);
         if captures.is_empty() {
             return DetectionOutcome::Complete(vec![]);
         }
         let request = evaluation_request(input, ply, &position.legal);
-        let analysis = match position.compare(|| self.evaluate(&request, control)) {
+        let analysis = match position.compare(&self.provenance, || self.evaluate(&request, control))
+        {
             Ok(analysis) => analysis,
             Err(stop) => return DetectionOutcome::Stopped(stop),
         };
@@ -645,8 +623,15 @@ mod position_tests {
 
     #[test]
     fn capture_and_mate_checks_share_legal_moves_and_engine_evidence() {
-        let board = parse_position("7k/p4Q2/6K1/8/8/8/8/R7 w - - 0 1", false).unwrap();
-        let position = PositionPass::new(&board);
+        let played = crate::parse_played_games(
+            "[SetUp \"1\"]\n[FEN \"7k/p4Q2/6K1/8/8/8/8/R7 w - - 0 1\"]\n\n1. Qf8# 1-0",
+        )
+        .unwrap()
+        .pop()
+        .unwrap()
+        .unwrap();
+        let input = GameDetectionInput::new(played.timeline(), LearnerColor::White);
+        let position = PositionPass::new(&input, 0).unwrap();
         let captures = captures_on_board(position.board, &position.legal);
         assert!(captures.iter().any(|capture| capture.answer.uci == "a1a7"));
         let mating_moves: Vec<_> = position
@@ -659,8 +644,17 @@ mod position_tests {
             })
             .collect();
         assert!(!mating_moves.is_empty());
-        assert!(position.comparison.get().is_none());
-        let score = position.compare(|| Ok(EvaluationStatus::Incomplete { evaluation: None }));
-        assert_eq!(score, position.compare(|| panic!("duplicate evaluation")));
+        let profile = EvaluationProvenance {
+            engine: "Fixture".into(),
+            engine_version: "1".into(),
+            configuration_fingerprint: "same".into(),
+        };
+        let score = position.compare(&profile, || {
+            Ok(EvaluationStatus::Incomplete { evaluation: None })
+        });
+        assert_eq!(
+            score,
+            position.compare(&profile, || panic!("duplicate evaluation"))
+        );
     }
 }
