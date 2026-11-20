@@ -100,13 +100,10 @@ pub fn played_deviation(
     let [game] = games.as_slice() else {
         return Ok(None);
     };
-    let Some(last) = ply.checked_sub(1).and_then(|i| game.mainline.get(i)) else {
+    let Some(index) = verified_deviation(game, ply, position, played) else {
         return Ok(None);
     };
-    let deviation = &game.plies[*last];
-    if &board_key(&deviation.board) != position || deviation.uci != played {
-        return Ok(None);
-    }
+    let deviation = &game.plies[index];
     let moves = game.mainline[..ply]
         .iter()
         .map(|&index| {
@@ -127,6 +124,32 @@ pub fn played_deviation(
             moves,
         },
     )))
+}
+
+/// Read only the opponent move directly before the same verified game deviation.
+pub fn played_deviation_lead_in(
+    pgn: &str,
+    ply: usize,
+    position: &PositionKey,
+    played: &str,
+) -> Result<Option<crate::OpponentLeadIn>, ChessError> {
+    let games = parse_pgn(pgn)?;
+    let [game] = games.as_slice() else {
+        return Ok(None);
+    };
+    Ok(verified_deviation(game, ply, position, played)
+        .and_then(|index| crate::OpponentLeadIn::from_pgn(game, index)))
+}
+
+fn verified_deviation(
+    game: &crate::parsed_pgn::PgnGame<'_>,
+    ply: usize,
+    position: &PositionKey,
+    played: &str,
+) -> Option<usize> {
+    let &index = game.mainline.get(ply.checked_sub(1)?)?;
+    let deviation = &game.plies[index];
+    (&board_key(&deviation.board) == position && deviation.uci == played).then_some(index)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

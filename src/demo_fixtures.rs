@@ -48,6 +48,7 @@ pub fn demo_catalog() -> Catalog {
                 decisions: vec![decision.clone()],
             },
             provenance: vec!["fixture".into()],
+            opponent_lead_in: crate::LeadInEvidence::Unavailable,
             lesson: None,
         },
         ContentItem {
@@ -64,6 +65,7 @@ pub fn demo_catalog() -> Catalog {
                 decisions: vec![second.clone()],
             },
             provenance: vec!["fixture".into()],
+            opponent_lead_in: crate::LeadInEvidence::Unavailable,
             lesson: None,
         },
         ContentItem {
@@ -79,6 +81,7 @@ pub fn demo_catalog() -> Catalog {
                 decisions: vec![decision, second],
             },
             provenance: vec!["fixture".into()],
+            opponent_lead_in: crate::LeadInEvidence::Unavailable,
             lesson: None,
         },
     ];

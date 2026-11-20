@@ -36,6 +36,8 @@ pub struct PositionDisplay {
     pub learner_color: LearnerColor,
     pub legal_moves: Vec<String>,
     pub in_check: bool,
+    /// Immediately preceding automatic opponent move in the disclosed prefix.
+    pub last_opponent_move: Option<String>,
 }
 
 /// Project a ready, completed or abandoned attempt using the definition version
@@ -78,11 +80,20 @@ pub fn project_position(
     let display_fen = decisions
         .get(index)
         .map_or_else(|| board.to_string(), |d| d.fen.clone());
+    let last_opponent_move = if board.side_to_move() == learner_color.board_color() {
+        index
+            .checked_sub(1)
+            .and_then(|played| decisions[played].autoplay.last())
+            .map(|reply| reply.uci.clone())
+    } else {
+        None
+    };
     Ok(PositionDisplay {
         display_fen,
         learner_color,
         legal_moves,
         in_check: !board.checkers().is_empty(),
+        last_opponent_move,
     })
 }
 

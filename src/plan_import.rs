@@ -199,6 +199,9 @@ pub(super) fn version_imported_item(
         return Ok(ChangeKind::Semantic);
     }
     item.version = old.version;
+    if !item.definition.is_repertoire() {
+        item.opponent_lead_in.reconcile(&old.opponent_lead_in);
+    }
     let mut normalized = old.clone();
     normalized.provenance.sort();
     normalized.provenance.dedup();

@@ -107,6 +107,8 @@ impl RepertoireImport<'_> {
         let ply = &game.plies[index];
         let position = board_key(&ply.board);
         let target = TargetId(format!("{}{}", self.identity, position.0));
+        let opponent_lead_in =
+            crate::LeadInEvidence::from(crate::OpponentLeadIn::from_pgn(game, index));
         match catalog.items.entry(target.clone()) {
             Entry::Vacant(entry) => {
                 let fen = format!("{} 0 1", position.0);
@@ -128,6 +130,7 @@ impl RepertoireImport<'_> {
                         }],
                     },
                     provenance: vec![self.source.to_owned()],
+                    opponent_lead_in,
                     lesson: Some(RepertoireLesson {
                         san: ply.san.clone(),
                         comments: ply.comments.clone(),
@@ -144,6 +147,7 @@ impl RepertoireImport<'_> {
                         position,
                     });
                 }
+                existing.opponent_lead_in.reconcile(&opponent_lead_in);
                 if let Some(lesson) = &mut existing.lesson {
                     for comment in &ply.comments {
                         if !lesson.comments.contains(comment) {
