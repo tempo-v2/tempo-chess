@@ -69,6 +69,14 @@ pub fn revealed_line(
     definition: &ChessDefinition,
     played_decisions: usize,
 ) -> Result<RevealedLine, ChessError> {
+    revealed_attempt_line(definition, &crate::ChessState::at(played_decisions))
+}
+
+pub fn revealed_attempt_line(
+    definition: &ChessDefinition,
+    state: &crate::ChessState,
+) -> Result<RevealedLine, ChessError> {
+    let played_decisions = state.decision_index;
     let invalid = || ChessError::InvalidContent("invalid revealed line cursor".into());
     let decisions = definition
         .decisions
@@ -76,9 +84,14 @@ pub fn revealed_line(
         .ok_or_else(invalid)?;
     let first = definition.decisions.first().ok_or_else(invalid)?;
     let mut moves = Vec::new();
-    for decision in decisions {
+    for (index, decision) in decisions.iter().enumerate() {
         let mut board = parse_position(&decision.fen, true)?;
-        for reply in std::iter::once(&decision.expected).chain(&decision.autoplay) {
+        let played = state
+            .played_mate
+            .as_ref()
+            .filter(|_| index + 1 == definition.decisions.len());
+        for reply in std::iter::once(played.unwrap_or(&decision.expected)).chain(&decision.autoplay)
+        {
             let mv = legal_move(&board, &reply.uci)?;
             let notation = numbered_san(&board, &display_san_move(&board, mv).to_string());
             board.play(mv);

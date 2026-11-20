@@ -56,7 +56,9 @@ pub fn project_position(
         None if !ready && index == decisions.len() => {
             let last = decisions.last().ok_or_else(invalid)?;
             let mut board = parse_position(&last.fen, true)?;
-            for answer in std::iter::once(&last.expected).chain(&last.autoplay) {
+            for answer in std::iter::once(state.played_mate.as_ref().unwrap_or(&last.expected))
+                .chain(&last.autoplay)
+            {
                 let mv = legal_move(&board, &answer.uci)?;
                 board.play(mv);
             }
@@ -155,18 +157,15 @@ mod tests {
             };
             let catalog = compile_tactics(&[row]).unwrap();
             let definition = &catalog.items.values().next().unwrap().definition;
-            let ready =
-                project_position(definition, &ChessState { decision_index: 0 }, true).unwrap();
+            let ready = project_position(definition, &ChessState::at(0), true).unwrap();
             for uci in choices {
                 assert!(ready.legal_moves.contains(&uci.to_owned()));
             }
             assert!(!ready.legal_moves.contains(&"e1h1".into()));
-            let abandoned =
-                project_position(definition, &ChessState { decision_index: 0 }, false).unwrap();
+            let abandoned = project_position(definition, &ChessState::at(0), false).unwrap();
             assert_eq!(abandoned.display_fen, ready.display_fen);
             assert!(abandoned.legal_moves.is_empty());
-            let completed =
-                project_position(definition, &ChessState { decision_index: 1 }, false).unwrap();
+            let completed = project_position(definition, &ChessState::at(1), false).unwrap();
             assert_eq!(completed.display_fen, last_fen);
             assert_eq!(completed.learner_color, LearnerColor::White);
             assert!(completed.legal_moves.is_empty());
@@ -190,8 +189,7 @@ mod tests {
         };
         let catalog = compile_tactics(&[row]).unwrap();
         let definition = &catalog.items.values().next().unwrap().definition;
-        let completed =
-            project_position(definition, &ChessState { decision_index: 1 }, false).unwrap();
+        let completed = project_position(definition, &ChessState::at(1), false).unwrap();
         assert_eq!(completed.learner_color, LearnerColor::Black);
         assert!(completed.in_check);
         assert!(completed.display_fen.contains(" w "));

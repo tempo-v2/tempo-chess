@@ -163,6 +163,13 @@ impl<'a> PositionPass<'a> {
         self.input.learner()
     }
 
+    pub(crate) fn earlier_boards(&self) -> impl Iterator<Item = &Board> {
+        self.input.timeline().occurrences()[..self.ply]
+            .iter()
+            .rev()
+            .map(|occurrence| &occurrence.board)
+    }
+
     /// The validated moves already played, in order. The current move is
     /// available separately on the occurrence.
     pub fn played_prefix(&self) -> impl ExactSizeIterator<Item = &ChessAnswer> {
@@ -316,7 +323,7 @@ pub enum PieceRole {
 }
 
 impl PieceRole {
-    fn from_piece(piece: Piece) -> Self {
+    pub(crate) fn from_piece(piece: Piece) -> Self {
         match piece {
             Piece::Pawn => Self::Pawn,
             Piece::Knight => Self::Knight,
@@ -456,6 +463,10 @@ fn validate_moment(
                     assessment,
                 )
             }
+            crate::TacticalKind::PersonalTactics => {
+                let pass = PositionPass::new(input, finding.occurrence).ok_or(InvalidOccurrence)?;
+                crate::personal_tactics::validate(&pass, assessment)
+            }
             crate::TacticalKind::WinningMate => {
                 let pass = PositionPass::new(input, finding.occurrence).ok_or(InvalidOccurrence)?;
                 validate_winning_mate(&pass, assessment)
@@ -498,11 +509,13 @@ fn validate_moment(
         fen: anchor.fen().into(),
         position: anchor.position().clone(),
         side_to_move: anchor.side_to_move(),
-        opponent_lead_in: if finding
-            .tactical
-            .as_ref()
-            .is_some_and(|result| result.puzzle.is_some())
-        {
+        opponent_lead_in: if finding.tactical.as_ref().is_some_and(|result| {
+            result.puzzle.is_some()
+                || result
+                    .personal
+                    .as_ref()
+                    .is_some_and(|evidence| evidence.puzzle.is_some())
+        }) {
             finding.occurrence.checked_sub(1).and_then(|ply| {
                 let previous = &input.timeline.occurrences()[ply];
                 crate::OpponentLeadIn::verified(

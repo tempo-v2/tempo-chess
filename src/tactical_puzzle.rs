@@ -25,11 +25,46 @@ pub fn plan_tactical_puzzle(
     selected: &ChessAnswer,
     provenance: &[String],
 ) -> Result<TacticalPuzzlePlan, ChessError> {
+    plan_line(
+        current,
+        fen,
+        std::slice::from_ref(selected),
+        false,
+        provenance,
+    )
+}
+
+pub fn plan_personal_puzzle(
+    current: &Catalog,
+    puzzle: &crate::PersonalPuzzle,
+    provenance: &[String],
+) -> Result<TacticalPuzzlePlan, ChessError> {
+    plan_line(
+        current,
+        &puzzle.fen,
+        &puzzle.line,
+        puzzle.kind == crate::PersonalPuzzleKind::ForcedMate,
+        provenance,
+    )
+}
+
+fn plan_line(
+    current: &Catalog,
+    fen: &str,
+    line: &[ChessAnswer],
+    mate: bool,
+    provenance: &[String],
+) -> Result<TacticalPuzzlePlan, ChessError> {
     let board = parse_position(fen, false)?;
     let position = board_key(&board);
     let mut hash = blake3::Hasher::new();
     hash.update(b"tempo-chess/generated-capture/v1");
-    for value in [position.0.as_str(), selected.uci.as_str()] {
+    if mate {
+        hash.update(b"forced-mate");
+    }
+    for value in
+        std::iter::once(position.0.as_str()).chain(line.iter().map(|answer| answer.uci.as_str()))
+    {
         hash.update(&(value.len() as u64).to_le_bytes());
         hash.update(value.as_bytes());
     }
@@ -37,11 +72,30 @@ pub fn plan_tactical_puzzle(
         namespace: "tempo-generated".into(),
         source_id: hash.finalize().to_hex().to_string(),
         solver_fen: format!("{} 0 1", position.0),
-        solution: vec![selected.uci.clone()],
+        solution: line.iter().map(|answer| answer.uci.clone()).collect(),
         label: "From your games".into(),
         provenance: provenance.to_vec(),
     };
-    let incoming = compile_tactics(&[record])?;
+    let mut incoming = compile_tactics(&[record])?;
+    if mate {
+        let mut finish = board.clone();
+        for answer in line {
+            let mv = crate::standard_uci::legal_move(&finish, &answer.uci)?;
+            finish.play_unchecked(mv);
+        }
+        if finish.status() != cozy_chess::GameStatus::Won || !matches!(line.len(), 1 | 3) {
+            return Err(ChessError::InvalidContent(
+                "forced mate needs a legal mating line of one or three plies".into(),
+            ));
+        }
+        incoming
+            .items
+            .values_mut()
+            .next()
+            .expect("one generated tactic")
+            .definition
+            .scheme = crate::GradingScheme::ForcedMateV1;
+    }
     let mut plan = plan_tactic_capture(current, &incoming)?;
     let target = plan.content.changes[0].target.clone();
     let retained = plan

@@ -40,6 +40,7 @@ pub use authored_repertoire::{
 };
 mod game_detector;
 mod hanging_material;
+mod personal_tactics;
 mod tactical_evaluation;
 mod tactical_puzzle;
 pub use game_detector::{
@@ -53,11 +54,15 @@ pub use hanging_material::{
     HangingMaterialDetector, TacticalAssessment, TacticalKind, TacticalOutcome,
     TacticalPuzzleSolution, hanging_captures,
 };
+pub use personal_tactics::{
+    Motif, MotifCandidate, PersonalPuzzle, PersonalPuzzleKind, PersonalTacticsDetector,
+    PersonalTacticsEvidence,
+};
 pub use tactical_evaluation::{
     EvaluationFailure, EvaluationProvenance, EvaluationScore, EvaluationStatus, RootEvaluation,
     RootScore, ScoreBound, TacticalEvaluationRequest, TacticalEvaluator,
 };
-pub use tactical_puzzle::{TacticalPuzzlePlan, plan_tactical_puzzle};
+pub use tactical_puzzle::{TacticalPuzzlePlan, plan_personal_puzzle, plan_tactical_puzzle};
 mod played_game_timeline;
 pub use played_game_timeline::{PlayedGameTimeline, PositionOccurrence};
 mod played_opening;
@@ -82,7 +87,8 @@ mod position_canonicalizer;
 mod position_display;
 mod revealed_line;
 pub use revealed_line::{
-    RevealedLine, RevealedMove, first_matching_repertoire_line, revealed_line,
+    RevealedLine, RevealedMove, first_matching_repertoire_line, revealed_attempt_line,
+    revealed_line,
 };
 mod position_key;
 mod repertoire_lesson;
@@ -148,3 +154,8 @@ pub use tactic_pgn::{
     TacticPgnStatus, preview_tactic_pgn,
 };
 pub use tactic_record::TacticRecord;
+
+mod game_report_facts;
+pub use game_report_facts::{
+    GameReportFacts, GameTimeControl, LearnerGameResult, game_report_facts,
+};

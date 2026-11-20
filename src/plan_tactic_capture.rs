@@ -107,6 +107,7 @@ pub(super) fn plan_tactic_items<'a>(
 struct TacticIdentity {
     position: PositionKey,
     solution: Vec<String>,
+    forced_mate: bool,
 }
 
 impl TacticIdentity {
@@ -116,6 +117,7 @@ impl TacticIdentity {
         };
         Some(Self {
             position: practice_start.clone(),
+            forced_mate: item.definition.scheme == crate::GradingScheme::ForcedMateV1,
             solution: item
                 .definition
                 .decisions
