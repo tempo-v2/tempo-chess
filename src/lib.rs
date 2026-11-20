@@ -46,6 +46,8 @@ pub use game_detector::{
 };
 mod played_game_timeline;
 pub use played_game_timeline::{PlayedGameTimeline, PositionOccurrence};
+mod played_opening;
+pub use played_opening::{PlayedOpening, played_opening};
 mod played_game;
 pub use played_game::{
     DecisionAdherence, PlayedDecision, PlayedGame, RepertoireComparison, RepertoireObservation,
