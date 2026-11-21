@@ -130,6 +130,7 @@ impl RepertoireImport<'_> {
                         }],
                     },
                     provenance: vec![self.source.to_owned()],
+                    game_capture: None,
                     opponent_lead_in,
                     lesson: Some(RepertoireLesson {
                         san: ply.san.clone(),

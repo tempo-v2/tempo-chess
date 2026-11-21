@@ -401,7 +401,7 @@ fn assemble(
     }
 }
 
-fn subject(board: &Board, square: Square) -> BoardSubject {
+pub(super) fn subject(board: &Board, square: Square) -> BoardSubject {
     BoardSubject {
         square: square.to_string(),
         role: PieceRole::from_piece(board.piece_on(square).expect("occupied square")),
@@ -545,7 +545,7 @@ fn ray_pairs(
     pairs
 }
 
-fn absolute_pins(board: &Board, color: Color) -> Vec<(Square, Square)> {
+pub(super) fn absolute_pins(board: &Board, color: Color) -> Vec<(Square, Square)> {
     let mut pins = vec![];
     for square in board.colors(!color) {
         let piece = board.piece_on(square).expect("occupied square");
@@ -559,6 +559,20 @@ fn absolute_pins(board: &Board, color: Color) -> Vec<(Square, Square)> {
         }
     }
     pins
+}
+
+pub(super) fn pin_blocks_recapture(
+    board: &Board,
+    after: &Board,
+    target: Square,
+    pinned: Square,
+) -> bool {
+    let defender = after.side_to_move();
+    let piece = board.piece_on(pinned).expect("pinned piece");
+    attacks(piece, pinned, defender, board.occupied()).has(target)
+        && after.pinned().has(pinned)
+        && !cozy_chess::get_line_rays(after.king(defender), pinned).has(target)
+        && (after.checkers().is_empty() || after.checkers() == target.bitboard())
 }
 
 fn legal_attack_squares(
@@ -576,6 +590,86 @@ fn legal_attack_squares(
     } else {
         targets
     }
+}
+
+// Geometry shared by game analysis and Study's single revealed move.
+pub(super) fn collect_attack_patterns(
+    board: &Board,
+    after: &Board,
+    mv: Move,
+    root: &ChessAnswer,
+    own_pins: &[(Square, Square)],
+    results: &mut Vec<MotifCandidate>,
+) -> Vec<(Square, Square)> {
+    let own = board.side_to_move();
+    let enemy = after.colors(!own);
+    let king = after.king(!own);
+    let vacated = board.occupied() & !after.occupied();
+    let next_pins = absolute_pins(after, own);
+    let mut changed_attacks = Vec::new();
+    for to in after.colors(own) {
+        let piece = after.piece_on(to).unwrap();
+        let old = if board.color_on(to) == Some(own) && board.piece_on(to) == Some(piece) {
+            to
+        } else if mv.to == to || piece == Piece::King {
+            mv.from
+        } else if piece == Piece::Rook && board.color_on(mv.to) == Some(own) {
+            mv.to
+        } else {
+            continue;
+        };
+        let previous = legal_attack_squares(board, old, own, own_pins);
+        let current = legal_attack_squares(after, to, own, &next_pins) & enemy;
+        let current = if after.checkers().has(to) {
+            current
+        } else {
+            current ^ (current & king.bitboard())
+        };
+        let new = current & !previous;
+        let mut push = |motif, targets: Vec<Square>| {
+            results.push(MotifCandidate {
+                motif,
+                answer: root.clone(),
+                attackers: vec![subject(after, to)],
+                targets: targets.into_iter().map(|sq| subject(after, sq)).collect(),
+                continuation: vec![],
+            });
+        };
+        if old != to && !new.is_empty() && current.len() >= 2 {
+            push(Motif::Fork, current.into_iter().collect());
+        }
+        if old == to && slider(piece) {
+            for target in new {
+                if (cozy_chess::get_between_rays(to, target) & vacated).is_empty() {
+                    continue;
+                }
+                push(
+                    if target == king {
+                        Motif::DiscoveredCheck
+                    } else {
+                        Motif::DiscoveredAttack
+                    },
+                    vec![target],
+                );
+            }
+        }
+        changed_attacks.extend(new.into_iter().map(|target| (to, target)));
+        if slider(piece) {
+            let old_pairs = if slider(board.piece_on(old).unwrap()) {
+                ray_pairs(board, old, board.piece_on(old).unwrap(), own)
+            } else {
+                vec![]
+            };
+            for (motif, front, back) in ray_pairs(after, to, piece, own) {
+                let already_threatened =
+                    previous.has(front) && old_pairs.contains(&(motif, front, back));
+                if current.has(front) && !already_threatened {
+                    push(motif, vec![front, back]);
+                }
+            }
+        }
+    }
+    changed_attacks
 }
 
 fn candidates(
@@ -610,13 +704,7 @@ fn candidates(
         let root = answer(board, mv);
         if board.color_on(mv.to) == Some(!own) {
             for (pinned_square, pinner) in &pinned {
-                let piece = board.piece_on(*pinned_square).expect("pinned piece");
-                if !attacks(piece, *pinned_square, !own, board.occupied()).has(mv.to)
-                    || !after.pinned().has(*pinned_square)
-                    || cozy_chess::get_line_rays(after.king(!own), *pinned_square).has(mv.to)
-                    || after.checkers().len() > 1
-                    || after.checkers().len() == 1 && !after.checkers().has(mv.to)
-                {
+                if !pin_blocks_recapture(board, &after, mv.to, *pinned_square) {
                     continue;
                 }
                 results.push(MotifCandidate {
@@ -628,73 +716,8 @@ fn candidates(
                 });
             }
         }
-        let enemy = after.colors(!own);
-        let king = after.king(!own);
-        let vacated = board.occupied() & !after.occupied();
-        let next_pins = absolute_pins(&after, own);
-        let mut changed_attacks = Vec::new();
-        for to in after.colors(own) {
-            let piece = after.piece_on(to).unwrap();
-            let old = if board.color_on(to) == Some(own) && board.piece_on(to) == Some(piece) {
-                to
-            } else if mv.to == to || piece == Piece::King {
-                mv.from
-            } else if piece == Piece::Rook && board.color_on(mv.to) == Some(own) {
-                mv.to
-            } else {
-                continue;
-            };
-            let previous = legal_attack_squares(board, old, own, &own_pins);
-            let current = legal_attack_squares(&after, to, own, &next_pins) & enemy;
-            let current = if after.checkers().has(to) {
-                current
-            } else {
-                current ^ (current & king.bitboard())
-            };
-            let new = current & !previous;
-            let mut push = |motif, targets: Vec<Square>| {
-                results.push(MotifCandidate {
-                    motif,
-                    answer: root.clone(),
-                    attackers: vec![subject(&after, to)],
-                    targets: targets.into_iter().map(|sq| subject(&after, sq)).collect(),
-                    continuation: vec![],
-                });
-            };
-            if old != to && !new.is_empty() && current.len() >= 2 {
-                push(Motif::Fork, current.into_iter().collect());
-            }
-            if old == to && slider(piece) {
-                for target in new {
-                    if (cozy_chess::get_between_rays(to, target) & vacated).is_empty() {
-                        continue;
-                    }
-                    push(
-                        if target == king {
-                            Motif::DiscoveredCheck
-                        } else {
-                            Motif::DiscoveredAttack
-                        },
-                        vec![target],
-                    );
-                }
-            }
-            changed_attacks.extend(new.into_iter().map(|target| (to, target)));
-            if slider(piece) {
-                let old_pairs = if slider(board.piece_on(old).unwrap()) {
-                    ray_pairs(board, old, board.piece_on(old).unwrap(), own)
-                } else {
-                    vec![]
-                };
-                for (motif, front, back) in ray_pairs(&after, to, piece, own) {
-                    let already_threatened =
-                        previous.has(front) && old_pairs.contains(&(motif, front, back));
-                    if current.has(front) && !already_threatened {
-                        push(motif, vec![front, back]);
-                    }
-                }
-            }
-        }
+        let changed_attacks =
+            collect_attack_patterns(board, &after, mv, &root, &own_pins, &mut results);
         // Two newly created attacks by distinct pieces can also be a double attack.
         if let Some((first, second)) =
             changed_attacks
@@ -725,7 +748,7 @@ fn candidates(
                 },
                 answer: root,
                 attackers: vec![subject(board, from)],
-                targets: vec![subject(&after, king)],
+                targets: vec![subject(&after, after.king(!own))],
                 continuation,
             });
         }

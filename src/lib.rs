@@ -41,6 +41,7 @@ pub use authored_repertoire::{
 mod game_detector;
 mod hanging_material;
 mod personal_tactics;
+mod tactic_explanation;
 mod tactical_evaluation;
 mod tactical_puzzle;
 pub use game_detector::{
@@ -58,6 +59,7 @@ pub use personal_tactics::{
     Motif, MotifCandidate, PersonalPuzzle, PersonalPuzzleKind, PersonalTacticsDetector,
     PersonalTacticsEvidence,
 };
+pub use tactic_explanation::{TacticExplanation, explain_tactic_move};
 pub use tactical_evaluation::{
     EvaluationFailure, EvaluationProvenance, EvaluationScore, EvaluationStatus, RootEvaluation,
     RootScore, ScoreBound, TacticalEvaluationRequest, TacticalEvaluator,
@@ -122,7 +124,7 @@ pub use chess_state::ChessState;
 pub use compile_repertoire::compile_repertoire;
 pub use compile_tactics::compile_tactics;
 pub use content_change::ContentChange;
-pub use content_item::ContentItem;
+pub use content_item::{ContentItem, GameCapture};
 pub use content_kind::ContentKind;
 pub use content_parser::ContentParser;
 pub use content_plan::ContentPlan;
