@@ -205,7 +205,7 @@ mod tests {
             Some(TacticExplanation::HangingPiece { captured })
                 if captured.square == "d4" && captured.role == PieceRole::Knight
         ));
-        assert_eq!(explain("7k/8/4p3/8/3n4/8/8/3R3K w - - 0 1", "d1d4"), None);
+        assert_eq!(explain("7k/8/8/4p3/3n4/8/8/3R3K w - - 0 1", "d1d4"), None);
         assert!(matches!(
             explain("7k/8/8/3pP3/8/8/8/7K w - d6 0 1", "e5d6"),
             Some(TacticExplanation::HangingPiece { captured })
