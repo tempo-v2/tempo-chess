@@ -35,8 +35,8 @@ mod fixture_comparator;
 mod fixture_parser;
 mod game_comparator;
 pub use authored_repertoire::{
-    AuthoredRepertoire, DepartureKind, GapDraft, OpponentGap, RepertoireAdherence,
-    legal_model_moves,
+    AuthoredRepertoire, DepartureKind, GapDraft, LearnerResponse, OpponentGap, RepertoireAdherence,
+    legal_model_moves, legal_successors,
 };
 mod game_detector;
 mod hanging_material;
@@ -100,8 +100,8 @@ mod repertoire_pgn_parser;
 mod standard_position_canonicalizer;
 mod structure;
 pub use structure::{
-    NearbyPosition, NearbyRepertoirePositions, NearbyResponse, PositionStructure, SavedRepertoireResponse,
-    nearby_repertoire_positions, structural_neighbors,
+    NearbyPosition, NearbyRepertoirePositions, NearbyResponse, PositionStructure,
+    SavedRepertoireResponse, nearby_repertoire_positions, structural_neighbors,
 };
 mod standard_uci;
 mod tactic_pgn;
