@@ -100,7 +100,7 @@ mod repertoire_pgn_parser;
 mod standard_position_canonicalizer;
 mod structure;
 pub use structure::{
-    NearbyPosition, NearbyRepertoirePositions, NearbyResponse, SavedRepertoireResponse,
+    NearbyPosition, NearbyRepertoirePositions, NearbyResponse, PositionStructure, SavedRepertoireResponse,
     nearby_repertoire_positions, structural_neighbors,
 };
 mod standard_uci;

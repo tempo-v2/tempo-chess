@@ -98,21 +98,55 @@ pub fn nearby_repertoire_positions(
     Ok(nearby)
 }
 
+/// Prepared Chess-owned comparison facts for one position. Use when the
+/// same position can be ranked for multiple references.
+pub struct PositionStructure {
+    canonical: PositionKey,
+    side_to_move: Color,
+    structure: Structure,
+}
+
+impl PositionStructure {
+    pub fn from_key(key: &PositionKey) -> Result<Self, ChessError> {
+        Ok(Self::from_board(&parse_position(
+            &format!("{} 0 1", key.0),
+            false,
+        )?))
+    }
+
+    fn from_board(board: &Board) -> Self {
+        Self {
+            canonical: board_key(board),
+            side_to_move: board.side_to_move(),
+            structure: Structure::read(board),
+        }
+    }
+
+    /// Rank by distance and then candidate key. The reference itself and
+    /// positions with a different side to move have no comparison.
+    pub fn rank<'a>(
+        &self,
+        key: &'a PositionKey,
+        candidate: &Self,
+    ) -> Option<(u32, &'a PositionKey)> {
+        if self.canonical == *key || self.side_to_move != candidate.side_to_move {
+            return None;
+        }
+        Some((self.structure.distance(&candidate.structure), key))
+    }
+}
+
 fn rank_positions<'a>(
     position: &Board,
     candidates: impl IntoIterator<Item = &'a PositionKey>,
 ) -> Result<Vec<(u32, &'a PositionKey)>, ChessError> {
-    let own_key = board_key(position);
-    let baseline = Structure::read(position);
+    let baseline = PositionStructure::from_board(position);
     let mut ranked = Vec::new();
     for key in candidates {
-        if *key == own_key {
+        if *key == baseline.canonical {
             continue;
         }
-        let candidate = parse_position(&format!("{} 0 1", key.0), false)?;
-        if position.side_to_move() == candidate.side_to_move() {
-            ranked.push((baseline.distance(&Structure::read(&candidate)), key));
-        }
+        ranked.extend(baseline.rank(key, &PositionStructure::from_key(key)?));
     }
     ranked.sort_unstable();
     ranked.dedup();
