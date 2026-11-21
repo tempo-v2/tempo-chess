@@ -4,7 +4,7 @@ use crate::standard_position_canonicalizer::{board_key, parse_position};
 use crate::{ChessError, LearnerColor, PlayedGame, PositionKey};
 use cozy_chess::util::{display_san_move, display_uci_move, parse_uci_move};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 #[derive(Debug, Default)]
 pub struct AuthoredRepertoire {
@@ -54,6 +54,8 @@ pub struct GapDraft {
     pub fen: String,
     pub legal_moves: Vec<String>,
     pub pgn: Option<String>,
+    #[serde(skip)]
+    pub anchor_route: Vec<String>,
 }
 
 /// The response required at the learner's next position.
@@ -62,6 +64,86 @@ pub enum LearnerResponse<'a> {
     Prepared(&'a PositionKey),
     Terminal,
     Missing,
+}
+
+/// A legal append-only route being drafted after a verified forecast gap.
+#[derive(Clone)]
+pub struct CoverageLine {
+    board: cozy_chess::Board,
+    san: Vec<String>,
+    anchor_route: Vec<String>,
+    color: LearnerColor,
+    answers: BTreeMap<PositionKey, String>,
+}
+
+impl CoverageLine {
+    pub fn position(&self) -> PositionKey {
+        board_key(&self.board)
+    }
+
+    pub fn fen(&self) -> String {
+        self.board.to_string()
+    }
+
+    /// Moves from the starting position through the opponent move that opened the gap.
+    pub fn anchor_route(&self) -> &[String] {
+        &self.anchor_route
+    }
+
+    pub fn learner_turn(&self) -> bool {
+        self.board.side_to_move() == self.color.board_color()
+    }
+
+    pub fn move_number(&self) -> u16 {
+        self.board.fullmove_number()
+    }
+
+    pub fn prepared_reply<'a>(&'a self, book: &'a AuthoredRepertoire) -> Option<&'a str> {
+        let key = self.position();
+        book.saved_reply(&key, self.color)
+            .map(|(played, _)| played)
+            .or_else(|| self.answers.get(&key))
+            .map(String::as_str)
+    }
+
+    pub fn play(&mut self, book: &AuthoredRepertoire, uci: &str) -> Result<String, ChessError> {
+        let learner = self.learner_turn();
+        if learner && self.prepared_reply(book).is_some_and(|saved| saved != uci) {
+            return Err(invalid("The line conflicts with a saved reply"));
+        }
+        let key = self.position();
+        let san = play_san(&mut self.board, uci)?;
+        if learner {
+            self.answers.entry(key).or_insert_with(|| uci.to_owned());
+        }
+        self.san.push(san.clone());
+        Ok(san)
+    }
+
+    fn into_gap_draft(mut self, pgn: &str, response: Option<&str>) -> Result<GapDraft, ChessError> {
+        let fen = self.fen();
+        let legal_moves = legal_model_moves(&self.position())?;
+        let pgn = response
+            .map(|uci| {
+                self.san.push(play_san(&mut self.board, uci)?);
+                Ok(self.append_to(pgn))
+            })
+            .transpose()?;
+        Ok(GapDraft {
+            fen,
+            legal_moves,
+            pgn,
+            anchor_route: self.anchor_route,
+        })
+    }
+
+    pub fn append_to(&self, pgn: &str) -> String {
+        format!(
+            "{}\n\n[Event \"Response to opponent gap\"]\n[Result \"*\"]\n\n{} *\n",
+            pgn.trim_end(),
+            self.san.join(" ")
+        )
+    }
 }
 
 impl AuthoredRepertoire {
@@ -155,7 +237,7 @@ impl AuthoredRepertoire {
         position: &PositionKey,
         color: LearnerColor,
     ) -> Result<LearnerResponse<'_>, ChessError> {
-        if let Some(next) = self.saved_successor(position, color) {
+        if let Some((_, next)) = self.saved_reply(position, color) {
             return Ok(LearnerResponse::Prepared(next));
         }
         let board = parse_position(&format!("{} 0 1", position.0), false)?;
@@ -169,10 +251,14 @@ impl AuthoredRepertoire {
         })
     }
 
-    fn saved_successor(&self, position: &PositionKey, color: LearnerColor) -> Option<&PositionKey> {
+    fn saved_reply(
+        &self,
+        position: &PositionKey,
+        color: LearnerColor,
+    ) -> Option<(&String, &PositionKey)> {
         let node = self.positions.get(position)?;
         (node.side == color)
-            .then(|| node.replies.values().next())
+            .then(|| node.replies.first_key_value())
             .flatten()
     }
 
@@ -194,6 +280,72 @@ impl AuthoredRepertoire {
             })
     }
 
+    /// Find the shortest legal lead-in to a forecast gap using the scan's
+    /// prepared-reply contract. Opponent moves may transpose to saved replies.
+    pub fn coverage_line(
+        &self,
+        position: &PositionKey,
+        opponent_move: &str,
+        color: LearnerColor,
+    ) -> Result<CoverageLine, ChessError> {
+        if !self.needs_response(position, opponent_move, color) {
+            return Err(invalid("This position no longer needs a response"));
+        }
+        let start = cozy_chess::Board::default();
+        let root = board_key(&start);
+        let mut queue = VecDeque::from([root.clone()]);
+        let mut parents = BTreeMap::from([(root.clone(), None)]);
+        while let Some(before) = queue.pop_front() {
+            if before == *position {
+                break;
+            }
+            let Some(node) = self.positions.get(&before) else {
+                continue;
+            };
+            let mut visit = |played, next: PositionKey| {
+                if let std::collections::btree_map::Entry::Vacant(entry) =
+                    parents.entry(next.clone())
+                {
+                    entry.insert(Some((before.clone(), played)));
+                    queue.push_back(next);
+                }
+            };
+            if node.side == color {
+                if let Some((played, next)) = self.saved_reply(&before, color) {
+                    visit(played.clone(), next.clone());
+                }
+            } else {
+                for (played, after) in legal_successors(&before)? {
+                    if self.saved_reply(&after, color).is_some() {
+                        visit(played, after);
+                    }
+                }
+            }
+        }
+        let mut route = vec![opponent_move.to_owned()];
+        let mut at = position;
+        while at != &root {
+            let Some(Some((parent, played))) = parents.get(at) else {
+                return Err(invalid("The gap is outside the prepared repertoire"));
+            };
+            route.push(played.clone());
+            at = parent;
+        }
+        let mut board = start;
+        let mut san = Vec::new();
+        route.reverse();
+        for uci in &route {
+            san.push(play_san(&mut board, uci)?);
+        }
+        Ok(CoverageLine {
+            board,
+            san,
+            anchor_route: route,
+            color,
+            answers: BTreeMap::new(),
+        })
+    }
+
     /// Extend the current authored anchor when a coverage scan finds a missing reply.
     pub fn forecast_gap_draft(
         &self,
@@ -203,10 +355,8 @@ impl AuthoredRepertoire {
         color: LearnerColor,
         response: Option<&str>,
     ) -> Result<GapDraft, ChessError> {
-        if !self.needs_response(position, opponent_move, color) {
-            return Err(invalid("This position no longer needs a response"));
-        }
-        self.response_draft(pgn, position, opponent_move, color, response)
+        self.coverage_line(position, opponent_move, color)?
+            .into_gap_draft(pgn, response)
     }
 
     /// Return an editable draft only for a legal move outside the currently authored replies.
@@ -245,32 +395,16 @@ impl AuthoredRepertoire {
             ));
         }
         path.push(play_san(&mut board, opponent_move)?);
-        let mut legal_moves = Vec::new();
-        board.generate_moves(|moves| {
-            legal_moves.extend(
-                moves
-                    .into_iter()
-                    .map(|mv| display_uci_move(&board, mv).to_string()),
-            );
-            false
-        });
-        legal_moves.sort_unstable();
-        let fen = board.to_string();
-        let pgn = response
-            .map(|uci| {
-                path.push(play_san(&mut board, uci)?);
-                Ok(format!(
-                    "{}\n\n[Event \"Response to opponent gap\"]\n[Result \"*\"]\n\n{} *\n",
-                    pgn.trim_end(),
-                    path.join(" ")
-                ))
-            })
-            .transpose()?;
-        Ok(GapDraft {
-            fen,
-            legal_moves,
-            pgn,
-        })
+        let mut anchor_route = node.prefix.clone();
+        anchor_route.push(opponent_move.to_owned());
+        CoverageLine {
+            board,
+            san: path,
+            anchor_route,
+            color,
+            answers: BTreeMap::new(),
+        }
+        .into_gap_draft(pgn, response)
     }
 }
 
