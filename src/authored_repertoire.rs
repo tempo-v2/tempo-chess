@@ -141,6 +141,49 @@ impl AuthoredRepertoire {
         (report, gaps)
     }
 
+    /// The saved learner move at this position in a verified repertoire.
+    pub fn saved_successor(
+        &self,
+        position: &PositionKey,
+        color: LearnerColor,
+    ) -> Option<&PositionKey> {
+        let node = self.positions.get(position)?;
+        (node.side == color)
+            .then(|| node.replies.values().next())
+            .flatten()
+    }
+
+    /// Whether this legal opponent move leads to a position requiring a new response.
+    pub fn needs_response(
+        &self,
+        position: &PositionKey,
+        played: &str,
+        color: LearnerColor,
+    ) -> bool {
+        self.positions
+            .get(position)
+            .is_some_and(|node| node.side != color)
+            && forecast_position(position, played).is_some_and(|after| {
+                self.saved_successor(&after, color).is_none()
+                    && legal_model_moves(&after).is_ok_and(|moves| !moves.is_empty())
+            })
+    }
+
+    /// Extend the current authored anchor when a coverage scan finds a missing reply.
+    pub fn forecast_gap_draft(
+        &self,
+        pgn: &str,
+        position: &PositionKey,
+        opponent_move: &str,
+        color: LearnerColor,
+        response: Option<&str>,
+    ) -> Result<GapDraft, ChessError> {
+        if !self.needs_response(position, opponent_move, color) {
+            return Err(invalid("This position no longer needs a response"));
+        }
+        self.response_draft(pgn, position, opponent_move, color, response)
+    }
+
     /// Return an editable draft only for a legal move outside the currently authored replies.
     pub fn gap_draft(
         &self,
@@ -150,11 +193,22 @@ impl AuthoredRepertoire {
         color: LearnerColor,
         response: Option<&str>,
     ) -> Result<GapDraft, ChessError> {
-        let node = self
-            .positions
+        self.positions
             .get(position)
             .filter(|node| !node.replies.is_empty() && !node.replies.contains_key(opponent_move))
             .ok_or_else(|| invalid("This position no longer has the selected coverage gap"))?;
+        self.response_draft(pgn, position, opponent_move, color, response)
+    }
+
+    fn response_draft(
+        &self,
+        pgn: &str,
+        position: &PositionKey,
+        opponent_move: &str,
+        color: LearnerColor,
+        response: Option<&str>,
+    ) -> Result<GapDraft, ChessError> {
+        let node = &self.positions[position];
         let mut board = cozy_chess::Board::default();
         let mut path = Vec::new();
         for uci in &node.prefix {
@@ -195,6 +249,13 @@ impl AuthoredRepertoire {
     }
 }
 
+fn forecast_position(position: &PositionKey, played: &str) -> Option<PositionKey> {
+    let mut board = parse_position(&format!("{} 0 1", position.0), false).ok()?;
+    let mv = parse_uci_move(&board, played).ok()?;
+    board.try_play(mv).ok()?;
+    Some(board_key(&board))
+}
+
 fn play_san(board: &mut cozy_chess::Board, uci: &str) -> Result<String, ChessError> {
     let mv = parse_uci_move(board, uci).map_err(|_| invalid("Invalid UCI move"))?;
     if !board.is_legal(mv) {
@@ -203,6 +264,23 @@ fn play_san(board: &mut cozy_chess::Board, uci: &str) -> Result<String, ChessErr
     let san = display_san_move(board, mv).to_string();
     board.play(mv);
     Ok(san)
+}
+
+/// Canonical positions after each legal move from this exact position.
+pub fn legal_successors(
+    position: &PositionKey,
+) -> Result<BTreeMap<String, PositionKey>, ChessError> {
+    let board = parse_position(&format!("{} 0 1", position.0), false)?;
+    let mut successors = BTreeMap::new();
+    board.generate_moves(|moves| {
+        for mv in moves {
+            let mut next = board.clone();
+            next.play(mv);
+            successors.insert(display_uci_move(&board, mv).to_string(), board_key(&next));
+        }
+        false
+    });
+    Ok(successors)
 }
 
 /// Legal replies in the exact position represented by a model cache key.
