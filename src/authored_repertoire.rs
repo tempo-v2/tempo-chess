@@ -98,9 +98,8 @@ impl CoverageLine {
 
     pub fn prepared_reply<'a>(&'a self, book: &'a AuthoredRepertoire) -> Option<&'a str> {
         let key = self.position();
-        book.positions
-            .get(&key)
-            .and_then(|node| node.replies.keys().next())
+        book.saved_reply(&key, self.color)
+            .map(|(played, _)| played)
             .or_else(|| self.answers.get(&key))
             .map(String::as_str)
     }
@@ -219,7 +218,7 @@ impl AuthoredRepertoire {
         position: &PositionKey,
         color: LearnerColor,
     ) -> Result<LearnerResponse<'_>, ChessError> {
-        if let Some(next) = self.saved_successor(position, color) {
+        if let Some((_, next)) = self.saved_reply(position, color) {
             return Ok(LearnerResponse::Prepared(next));
         }
         let board = parse_position(&format!("{} 0 1", position.0), false)?;
@@ -233,10 +232,14 @@ impl AuthoredRepertoire {
         })
     }
 
-    fn saved_successor(&self, position: &PositionKey, color: LearnerColor) -> Option<&PositionKey> {
+    fn saved_reply(
+        &self,
+        position: &PositionKey,
+        color: LearnerColor,
+    ) -> Option<(&String, &PositionKey)> {
         let node = self.positions.get(position)?;
         (node.side == color)
-            .then(|| node.replies.values().next())
+            .then(|| node.replies.first_key_value())
             .flatten()
     }
 
@@ -258,8 +261,8 @@ impl AuthoredRepertoire {
             })
     }
 
-    /// Find the shortest route through saved replies to a forecast gap. The
-    /// gap may be reachable via transposition before its first PGN occurrence.
+    /// Find the shortest legal lead-in to a forecast gap using the scan's
+    /// prepared-reply contract. Opponent moves may transpose to saved replies.
     pub fn coverage_line(
         &self,
         position: &PositionKey,
@@ -277,24 +280,36 @@ impl AuthoredRepertoire {
             if before == *position {
                 break;
             }
-            if let Some(node) = self.positions.get(&before) {
-                for (played, next) in &node.replies {
-                    if let std::collections::btree_map::Entry::Vacant(entry) =
-                        parents.entry(next.clone())
-                    {
-                        entry.insert(Some((before.clone(), played)));
-                        queue.push_back(next.clone());
+            let Some(node) = self.positions.get(&before) else {
+                continue;
+            };
+            let mut visit = |played, next: PositionKey| {
+                if let std::collections::btree_map::Entry::Vacant(entry) =
+                    parents.entry(next.clone())
+                {
+                    entry.insert(Some((before.clone(), played)));
+                    queue.push_back(next);
+                }
+            };
+            if node.side == color {
+                if let Some((played, next)) = self.saved_reply(&before, color) {
+                    visit(played.clone(), next.clone());
+                }
+            } else {
+                for (played, after) in legal_successors(&before)? {
+                    if self.saved_reply(&after, color).is_some() {
+                        visit(played, after);
                     }
                 }
             }
         }
-        let mut route = vec![opponent_move];
+        let mut route = vec![opponent_move.to_owned()];
         let mut at = position;
         while at != &root {
             let Some(Some((parent, played))) = parents.get(at) else {
-                return Err(invalid("The gap is outside the authored repertoire"));
+                return Err(invalid("The gap is outside the prepared repertoire"));
             };
-            route.push(played);
+            route.push(played.clone());
             at = parent;
         }
         let mut board = start;
@@ -306,7 +321,7 @@ impl AuthoredRepertoire {
         Ok(CoverageLine {
             board,
             san,
-            anchor_route: route.into_iter().map(str::to_owned).collect(),
+            anchor_route: route,
             color,
             answers: BTreeMap::new(),
         })
