@@ -35,7 +35,7 @@ mod fixture_comparator;
 mod fixture_parser;
 mod game_comparator;
 pub use authored_repertoire::{
-    AuthoredRepertoire, DepartureKind, GapDraft, OpponentGap, RepertoireAdherence,
+    AuthoredRepertoire, DepartureKind, GapDraft, LearnerResponse, OpponentGap, RepertoireAdherence,
     legal_model_moves, legal_successors,
 };
 mod game_detector;

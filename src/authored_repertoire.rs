@@ -56,6 +56,14 @@ pub struct GapDraft {
     pub pgn: Option<String>,
 }
 
+/// The response required at the learner's next position.
+#[derive(Clone, Copy)]
+pub enum LearnerResponse<'a> {
+    Prepared(&'a PositionKey),
+    Terminal,
+    Missing,
+}
+
 impl AuthoredRepertoire {
     pub fn parse(pgn: &str) -> Result<Self, ChessError> {
         let mut book = Self::default();
@@ -141,12 +149,27 @@ impl AuthoredRepertoire {
         (report, gaps)
     }
 
-    /// The saved learner move at this position in a verified repertoire.
-    pub fn saved_successor(
+    /// Classify the learner's position using the verified book and chess legality.
+    pub fn learner_response(
         &self,
         position: &PositionKey,
         color: LearnerColor,
-    ) -> Option<&PositionKey> {
+    ) -> Result<LearnerResponse<'_>, ChessError> {
+        if let Some(next) = self.saved_successor(position, color) {
+            return Ok(LearnerResponse::Prepared(next));
+        }
+        let board = parse_position(&format!("{} 0 1", position.0), false)?;
+        if board.side_to_move() != color.board_color() {
+            return Err(invalid("The position is not on the learner's turn"));
+        }
+        Ok(if board.generate_moves(|_| true) {
+            LearnerResponse::Missing
+        } else {
+            LearnerResponse::Terminal
+        })
+    }
+
+    fn saved_successor(&self, position: &PositionKey, color: LearnerColor) -> Option<&PositionKey> {
         let node = self.positions.get(position)?;
         (node.side == color)
             .then(|| node.replies.values().next())
@@ -164,8 +187,10 @@ impl AuthoredRepertoire {
             .get(position)
             .is_some_and(|node| node.side != color)
             && forecast_position(position, played).is_some_and(|after| {
-                self.saved_successor(&after, color).is_none()
-                    && legal_model_moves(&after).is_ok_and(|moves| !moves.is_empty())
+                matches!(
+                    self.learner_response(&after, color),
+                    Ok(LearnerResponse::Missing)
+                )
             })
     }
 
