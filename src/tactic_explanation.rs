@@ -1,4 +1,5 @@
 //! Verified teaching evidence for a revealed tactic move.
+use crate::hanging_capture::hanging_capture_target;
 use crate::personal_tactics::{
     absolute_pins, collect_attack_patterns, pin_blocks_recapture, subject,
 };
@@ -9,8 +10,8 @@ use cozy_chess::{GameStatus, Square};
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 
-/// Pieces involved in the correction after the move. In a pin capture,
-/// `captured` identifies the piece that was on the destination before the move.
+/// Pieces involved in the correction. `captured` identifies a piece before
+/// the move, including the pawn square for en passant.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TacticExplanation {
@@ -46,12 +47,16 @@ pub enum TacticExplanation {
         king: BoardSubject,
         checkers: Vec<BoardSubject>,
     },
+    HangingPiece {
+        captured: BoardSubject,
+    },
 }
 
 impl TacticExplanation {
     fn order(&self) -> (u8, &str, &str, &str) {
         match self {
             Self::MateInOne { .. } => (0, "", "", ""),
+            Self::HangingPiece { .. } => (7, "", "", ""),
             Self::Pin {
                 attacker,
                 front,
@@ -178,7 +183,11 @@ pub fn explain_tactic_move(
     }
     Ok(explanations
         .into_iter()
-        .min_by(|a, b| a.order().cmp(&b.order())))
+        .min_by(|a, b| a.order().cmp(&b.order()))
+        .or_else(|| {
+            hanging_capture_target(&board, mv)
+                .map(|captured| TacticExplanation::HangingPiece { captured })
+        }))
 }
 
 #[cfg(test)]
@@ -187,6 +196,21 @@ mod tests {
 
     fn explain(fen: &str, uci: &str) -> Option<TacticExplanation> {
         explain_tactic_move(fen, &uci.into()).unwrap()
+    }
+
+    #[test]
+    fn explains_a_capture_without_recapture_and_marks_the_en_passant_pawn() {
+        assert!(matches!(
+            explain("7k/8/8/8/3n4/8/8/3R3K w - - 0 1", "d1d4"),
+            Some(TacticExplanation::HangingPiece { captured })
+                if captured.square == "d4" && captured.role == PieceRole::Knight
+        ));
+        assert_eq!(explain("7k/8/4p3/8/3n4/8/8/3R3K w - - 0 1", "d1d4"), None);
+        assert!(matches!(
+            explain("7k/8/8/3pP3/8/8/8/7K w - d6 0 1", "e5d6"),
+            Some(TacticExplanation::HangingPiece { captured })
+                if captured.square == "d5" && captured.role == PieceRole::Pawn
+        ));
     }
 
     #[test]
