@@ -58,11 +58,13 @@ fn anchor_prefix(
         };
         let mut board = start;
         let mut final_gap = false;
+        let mut forecast_gap = None;
         for (index, uci) in route.iter().enumerate() {
             if index + 1 == route.len() && board.side_to_move() != color.board_color() {
                 final_gap = book.positions.get(&board_key(&board)).is_some_and(|node| {
                     !node.replies.is_empty() && !node.replies.contains_key(uci)
                 });
+                forecast_gap = Some((board_key(&board), uci));
             }
             let mv = legal_move(&board, uci)?;
             board.play_unchecked(mv);
@@ -73,7 +75,13 @@ fn anchor_prefix(
         } else {
             route
         };
-        if !authored_prefix(required) {
+        // Coverage can also supply the exact verified lead-in across a transposition.
+        if !authored_prefix(required)
+            && !forecast_gap.is_some_and(|(before, played)| {
+                book.coverage_line(&before, played, color)
+                    .is_ok_and(|line| line.anchor_route() == route)
+            })
+        {
             return Err(invalid(
                 "The starting move order is outside the selected repertoire.",
             ));

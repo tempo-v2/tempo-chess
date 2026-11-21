@@ -54,6 +54,8 @@ pub struct GapDraft {
     pub fen: String,
     pub legal_moves: Vec<String>,
     pub pgn: Option<String>,
+    #[serde(skip)]
+    pub anchor_route: Vec<String>,
 }
 
 /// The response required at the learner's next position.
@@ -116,6 +118,23 @@ impl CoverageLine {
         }
         self.san.push(san.clone());
         Ok(san)
+    }
+
+    fn into_gap_draft(mut self, pgn: &str, response: Option<&str>) -> Result<GapDraft, ChessError> {
+        let fen = self.fen();
+        let legal_moves = legal_model_moves(&self.position())?;
+        let pgn = response
+            .map(|uci| {
+                self.san.push(play_san(&mut self.board, uci)?);
+                Ok(self.append_to(pgn))
+            })
+            .transpose()?;
+        Ok(GapDraft {
+            fen,
+            legal_moves,
+            pgn,
+            anchor_route: self.anchor_route,
+        })
     }
 
     pub fn append_to(&self, pgn: &str) -> String {
@@ -336,10 +355,8 @@ impl AuthoredRepertoire {
         color: LearnerColor,
         response: Option<&str>,
     ) -> Result<GapDraft, ChessError> {
-        if !self.needs_response(position, opponent_move, color) {
-            return Err(invalid("This position no longer needs a response"));
-        }
-        self.response_draft(pgn, position, opponent_move, color, response)
+        self.coverage_line(position, opponent_move, color)?
+            .into_gap_draft(pgn, response)
     }
 
     /// Return an editable draft only for a legal move outside the currently authored replies.
@@ -378,32 +395,16 @@ impl AuthoredRepertoire {
             ));
         }
         path.push(play_san(&mut board, opponent_move)?);
-        let mut legal_moves = Vec::new();
-        board.generate_moves(|moves| {
-            legal_moves.extend(
-                moves
-                    .into_iter()
-                    .map(|mv| display_uci_move(&board, mv).to_string()),
-            );
-            false
-        });
-        legal_moves.sort_unstable();
-        let fen = board.to_string();
-        let pgn = response
-            .map(|uci| {
-                path.push(play_san(&mut board, uci)?);
-                Ok(format!(
-                    "{}\n\n[Event \"Response to opponent gap\"]\n[Result \"*\"]\n\n{} *\n",
-                    pgn.trim_end(),
-                    path.join(" ")
-                ))
-            })
-            .transpose()?;
-        Ok(GapDraft {
-            fen,
-            legal_moves,
-            pgn,
-        })
+        let mut anchor_route = node.prefix.clone();
+        anchor_route.push(opponent_move.to_owned());
+        CoverageLine {
+            board,
+            san: path,
+            anchor_route,
+            color,
+            answers: BTreeMap::new(),
+        }
+        .into_gap_draft(pgn, response)
     }
 }
 
