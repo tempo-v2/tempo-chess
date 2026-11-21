@@ -69,6 +69,7 @@ pub enum LearnerResponse<'a> {
 pub struct CoverageLine {
     board: cozy_chess::Board,
     san: Vec<String>,
+    anchor_route: Vec<String>,
     color: LearnerColor,
     answers: BTreeMap<PositionKey, String>,
 }
@@ -80,6 +81,11 @@ impl CoverageLine {
 
     pub fn fen(&self) -> String {
         self.board.to_string()
+    }
+
+    /// Moves from the starting position through the opponent move that opened the gap.
+    pub fn anchor_route(&self) -> &[String] {
+        &self.anchor_route
     }
 
     pub fn learner_turn(&self) -> bool {
@@ -293,12 +299,14 @@ impl AuthoredRepertoire {
         }
         let mut board = start;
         let mut san = Vec::new();
-        for uci in route.into_iter().rev() {
+        route.reverse();
+        for uci in &route {
             san.push(play_san(&mut board, uci)?);
         }
         Ok(CoverageLine {
             board,
             san,
+            anchor_route: route.into_iter().map(str::to_owned).collect(),
             color,
             answers: BTreeMap::new(),
         })
