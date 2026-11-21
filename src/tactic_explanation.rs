@@ -6,7 +6,7 @@ use crate::personal_tactics::{
 use crate::standard_position_canonicalizer::parse_position;
 use crate::standard_uci::legal_move;
 use crate::{BoardSubject, ChessAnswer, ChessError, Motif, PieceRole};
-use cozy_chess::{GameStatus, Square};
+use cozy_chess::{Board, GameStatus, Piece, Square};
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 
@@ -43,6 +43,7 @@ pub enum TacticExplanation {
         attacker: BoardSubject,
         target: BoardSubject,
     },
+    MatingLine,
     MateInOne {
         king: BoardSubject,
         checkers: Vec<BoardSubject>,
@@ -55,7 +56,7 @@ pub enum TacticExplanation {
 impl TacticExplanation {
     fn order(&self) -> (u8, &str, &str, &str) {
         match self {
-            Self::MateInOne { .. } => (0, "", "", ""),
+            Self::MatingLine | Self::MateInOne { .. } => (0, "", "", ""),
             Self::HangingPiece { .. } => (7, "", "", ""),
             Self::Pin {
                 attacker,
@@ -92,6 +93,110 @@ impl TacticExplanation {
 pub fn explain_tactic_move(
     fen: &str,
     correction: &ChessAnswer,
+) -> Result<Option<TacticExplanation>, ChessError> {
+    explain_with_payoff(fen, correction, None)
+}
+
+/// Explain the revealed decision using the issued, immutable continuation.
+/// Only subjects already visible at this decision leave Chess.
+pub fn explain_tactic_decision(
+    decisions: &[crate::Decision],
+) -> Result<Option<TacticExplanation>, ChessError> {
+    let Some((decision, rest)) = decisions.split_first() else {
+        return Ok(None);
+    };
+    let mut board = parse_position(&decision.fen, true)?;
+    let initial = crate::tactic_payoff::material(&board, board.side_to_move());
+    board.play_unchecked(legal_move(&board, &decision.expected.uci)?);
+    let (payoff, reaches_mate) = payoff_subjects(
+        board,
+        initial,
+        decision.autoplay.iter().chain(
+            rest.iter()
+                .flat_map(|d| std::iter::once(&d.expected).chain(&d.autoplay)),
+        ),
+    )?;
+    if !rest.is_empty() && reaches_mate {
+        return Ok(Some(TacticExplanation::MatingLine));
+    }
+    explain_with_payoff(&decision.fen, &decision.expected, payoff)
+}
+
+// Track both participants back to the correction board, including pieces that
+// move again before the final capture. Castling uses king-to-rook internally.
+fn payoff_subjects<'a>(
+    mut board: Board,
+    initial: i32,
+    line: impl Iterator<Item = &'a ChessAnswer>,
+) -> Result<(Option<(Square, Square)>, bool), ChessError> {
+    let solver = !board.side_to_move();
+    let mut origins = Square::ALL.map(Some);
+    let mut last = None;
+    for answer in line {
+        let mv = legal_move(&board, &answer.uci)?;
+        let turn = board.side_to_move();
+        let castle = board.color_on(mv.to) == Some(turn);
+        let capture = if board.color_on(mv.to) == Some(!turn) {
+            Some(mv.to)
+        } else if board.piece_on(mv.from) == Some(Piece::Pawn) && mv.from.file() != mv.to.file() {
+            Some(Square::new(mv.to.file(), mv.from.rank()))
+        } else {
+            None
+        };
+        if turn == solver {
+            last = origins[mv.from as usize].zip(capture.and_then(|sq| origins[sq as usize]));
+        } else if capture.is_some() {
+            last = None;
+        }
+        if let Some(square) = capture {
+            origins[square as usize] = None;
+        }
+        let from = origins[mv.from as usize].take();
+        if castle {
+            let rook = origins[mv.to as usize].take();
+            let kingside = mv.from.file() < mv.to.file();
+            let rank = mv.from.rank();
+            origins[Square::new(
+                if kingside {
+                    cozy_chess::File::G
+                } else {
+                    cozy_chess::File::C
+                },
+                rank,
+            ) as usize] = from;
+            origins[Square::new(
+                if kingside {
+                    cozy_chess::File::F
+                } else {
+                    cozy_chess::File::D
+                },
+                rank,
+            ) as usize] = rook;
+        } else {
+            origins[mv.to as usize] = from;
+        }
+        board.play_unchecked(mv);
+    }
+    let gain_survives = last.is_some()
+        && crate::tactic_payoff::material(&board, solver) > initial
+        && (board.side_to_move() == solver
+            || !board.generate_moves(|moves| {
+                moves.into_iter().any(|mv| {
+                    let mut reply = board.clone();
+                    reply.play_unchecked(mv);
+                    crate::tactic_payoff::material(&reply, solver) <= initial
+                })
+            }));
+    Ok((
+        last.filter(|_| gain_survives),
+        board.side_to_move() != solver && board.status() == GameStatus::Won,
+    ))
+}
+
+fn explain_with_payoff(
+    fen: &str,
+    correction: &ChessAnswer,
+    payoff: Option<(Square, Square)>,
 ) -> Result<Option<TacticExplanation>, ChessError> {
     let board = parse_position(fen, true)?;
     let mv = legal_move(&board, &correction.uci)?;
@@ -158,6 +263,17 @@ pub fn explain_tactic_move(
                     (Reverse(a.role as u8), &a.square).cmp(&(Reverse(b.role as u8), &b.square))
                 });
                 let from: Square = attacker.square.parse().expect("chess square");
+                if let Some((captor, victim)) = payoff
+                    && captor == from
+                    && let Some(index) = targets.iter().position(|t| t.square == victim.to_string())
+                {
+                    let victim = targets.remove(index);
+                    explanations.push(TacticExplanation::Fork {
+                        attacker,
+                        targets: [victim, targets.remove(0)],
+                    });
+                    continue;
+                }
                 let Some(index) = targets.iter().position(|target| {
                     gained.contains(&(from, target.square.parse().expect("chess square")))
                 }) else {
@@ -181,13 +297,45 @@ pub fn explain_tactic_move(
         };
         explanations.push(explanation);
     }
-    Ok(explanations
-        .into_iter()
-        .min_by(|a, b| a.order().cmp(&b.order()))
-        .or_else(|| {
-            hanging_capture_target(&board, mv)
-                .map(|captured| TacticExplanation::HangingPiece { captured })
-        }))
+    let supported = |hint: &TacticExplanation| {
+        payoff.is_some_and(|(captor, victim)| {
+            let target = victim.to_string();
+            match hint {
+                TacticExplanation::Fork { attacker, targets } => {
+                    attacker.square == captor.to_string()
+                        && targets.iter().any(|p| p.square == target)
+                }
+                TacticExplanation::Pin { front, .. } => front.square == target,
+                TacticExplanation::Skewer { attacker, rear, .. } => {
+                    attacker.square == captor.to_string() && rear.square == target
+                }
+                TacticExplanation::DiscoveredAttack {
+                    attacker,
+                    target: prey,
+                } => attacker.square == captor.to_string() && prey.square == target,
+                _ => false,
+            }
+        })
+    };
+    // A material pin or skewer is useful here only if the issued continuation
+    // realizes it. Absolute pins can independently constrain a legal reply.
+    explanations.retain(|hint| match hint {
+        TacticExplanation::Pin { rear, .. } if rear.role != PieceRole::King => supported(hint),
+        TacticExplanation::Skewer { .. } => supported(hint),
+        _ => true,
+    });
+    if let Some(captured) = hanging_capture_target(&board, mv) {
+        explanations.push(TacticExplanation::HangingPiece { captured });
+    }
+    Ok(explanations.into_iter().min_by_key(|hint| {
+        let priority = match hint {
+            _ if supported(hint) => 0,
+            TacticExplanation::PinCapture { .. } => 1,
+            TacticExplanation::HangingPiece { .. } => 2,
+            _ => 3,
+        };
+        (priority, hint.order().0)
+    }))
 }
 
 #[cfg(test)]
@@ -233,16 +381,46 @@ mod tests {
     }
 
     #[test]
-    fn distinguishes_the_front_and_rear_pieces_on_the_same_ray() {
-        assert!(matches!(
-            explain("7k/8/3b4/8/3n4/8/8/R6K w - - 0 1", "a1d1"),
-            Some(TacticExplanation::Pin { attacker, front, rear })
-                if attacker.square == "d1" && front.square == "d4" && rear.square == "d6"
+    fn relative_rays_require_a_payoff_in_the_issued_line() {
+        let explain_line = |fen: &str, reply: &str, finish: &str| {
+            let mut board = parse_position(fen, true).unwrap();
+            for uci in ["a1d1", reply] {
+                board.play_unchecked(legal_move(&board, uci).unwrap());
+            }
+            explain_tactic_decision(&[
+                crate::Decision {
+                    fen: fen.into(),
+                    expected: "a1d1".into(),
+                    autoplay: vec![reply.into()],
+                },
+                crate::Decision {
+                    fen: board.to_string(),
+                    expected: finish.into(),
+                    autoplay: vec![],
+                },
+            ])
+            .unwrap()
+        };
+        let pin = "7k/8/3q4/8/3n4/8/8/R6K w - - 0 1";
+        assert!(!matches!(
+            explain(pin, "a1d1"),
+            Some(TacticExplanation::Pin { .. })
         ));
-        assert!(matches!(
-            explain("7k/8/3n4/8/3b4/8/8/R6K w - - 0 1", "a1d1"),
-            Some(TacticExplanation::Skewer { attacker, front, rear })
-                if attacker.square == "d1" && front.square == "d4" && rear.square == "d6"
+        assert!(
+            matches!(explain_line(pin,"d6e6","d1d4"),Some(TacticExplanation::Pin{front,..}) if front.square=="d4")
+        );
+        let skewer = "7k/8/3n4/8/3q4/8/8/R6K w - - 0 1";
+        assert!(!matches!(
+            explain(skewer, "a1d1"),
+            Some(TacticExplanation::Skewer { .. })
+        ));
+        assert!(
+            matches!(explain_line(skewer,"d4c4","d1d6"),Some(TacticExplanation::Skewer{rear,..}) if rear.square=="d6")
+        );
+        // On c5 the displaced queen protects d6. Rxd6 Qxd6 loses the exchange.
+        assert!(!matches!(
+            explain_line(skewer, "d4c5", "d1d6"),
+            Some(TacticExplanation::Skewer { .. })
         ));
     }
 

@@ -98,6 +98,7 @@ fn compile_record(
             decisions,
         },
         provenance,
+        payoff_origin_version: None,
         game_capture: None,
         opponent_lead_in: crate::LeadInEvidence::Unavailable,
         lesson: None,

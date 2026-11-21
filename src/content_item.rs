@@ -30,6 +30,10 @@ pub struct ContentItem {
     pub status: ContentStatus,
     pub definition: ChessDefinition,
     pub provenance: Vec<String>,
+    /// Earlier definition whose accepted game finding supplied this payoff extension.
+    /// Used only to carry related-game attribution across this exact version change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payoff_origin_version: Option<ContentVersion>,
     /// An archived game capture verified against this exact definition.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub game_capture: Option<GameCapture>,

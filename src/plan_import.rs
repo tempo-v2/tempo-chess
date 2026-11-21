@@ -181,6 +181,7 @@ pub(super) fn version_imported_item(
 ) -> Result<ChangeKind, ChessError> {
     let Some(old) = old else {
         item.version = ContentVersion(1);
+        item.payoff_origin_version = None;
         return Ok(ChangeKind::Added);
     };
     if old.definition.kind != item.definition.kind {
@@ -190,6 +191,7 @@ pub(super) fn version_imported_item(
     item.provenance.sort();
     item.provenance.dedup();
     if old.definition != item.definition {
+        item.payoff_origin_version = None;
         item.version = ContentVersion(
             old.version
                 .0
@@ -199,6 +201,7 @@ pub(super) fn version_imported_item(
         return Ok(ChangeKind::Semantic);
     }
     item.version = old.version;
+    item.payoff_origin_version = old.payoff_origin_version;
     if !item.definition.is_repertoire() {
         item.opponent_lead_in.reconcile(&old.opponent_lead_in);
         if item.game_capture.is_none() {

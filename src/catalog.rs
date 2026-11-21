@@ -47,6 +47,15 @@ impl Catalog {
                 ));
             }
             item.definition.validate()?;
+            if item.payoff_origin_version.is_some_and(|prior| {
+                prior.0 == 0
+                    || prior.0.checked_add(1) != Some(item.version.0)
+                    || item.definition.is_repertoire()
+            }) {
+                return Err(ChessError::InvalidContent(
+                    "invalid payoff origin version".into(),
+                ));
+            }
             if item.game_capture.as_ref().is_some_and(|capture| {
                 item.definition.is_repertoire() || capture.capture_id.trim().is_empty()
             }) {
