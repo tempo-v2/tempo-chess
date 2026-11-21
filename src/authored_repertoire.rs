@@ -4,7 +4,7 @@ use crate::standard_position_canonicalizer::{board_key, parse_position};
 use crate::{ChessError, LearnerColor, PlayedGame, PositionKey};
 use cozy_chess::util::{display_san_move, display_uci_move, parse_uci_move};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 #[derive(Debug, Default)]
 pub struct AuthoredRepertoire {
@@ -62,6 +62,64 @@ pub enum LearnerResponse<'a> {
     Prepared(&'a PositionKey),
     Terminal,
     Missing,
+}
+
+/// A legal append-only route being drafted after a verified forecast gap.
+#[derive(Clone)]
+pub struct CoverageLine {
+    board: cozy_chess::Board,
+    san: Vec<String>,
+    color: LearnerColor,
+    answers: BTreeMap<PositionKey, String>,
+}
+
+impl CoverageLine {
+    pub fn position(&self) -> PositionKey {
+        board_key(&self.board)
+    }
+
+    pub fn fen(&self) -> String {
+        self.board.to_string()
+    }
+
+    pub fn learner_turn(&self) -> bool {
+        self.board.side_to_move() == self.color.board_color()
+    }
+
+    pub fn move_number(&self) -> u16 {
+        self.board.fullmove_number()
+    }
+
+    pub fn prepared_reply<'a>(&'a self, book: &'a AuthoredRepertoire) -> Option<&'a str> {
+        let key = self.position();
+        book.positions
+            .get(&key)
+            .and_then(|node| node.replies.keys().next())
+            .or_else(|| self.answers.get(&key))
+            .map(String::as_str)
+    }
+
+    pub fn play(&mut self, book: &AuthoredRepertoire, uci: &str) -> Result<String, ChessError> {
+        let learner = self.learner_turn();
+        if learner && self.prepared_reply(book).is_some_and(|saved| saved != uci) {
+            return Err(invalid("The line conflicts with a saved reply"));
+        }
+        let key = self.position();
+        let san = play_san(&mut self.board, uci)?;
+        if learner {
+            self.answers.entry(key).or_insert_with(|| uci.to_owned());
+        }
+        self.san.push(san.clone());
+        Ok(san)
+    }
+
+    pub fn append_to(&self, pgn: &str) -> String {
+        format!(
+            "{}\n\n[Event \"Response to opponent gap\"]\n[Result \"*\"]\n\n{} *\n",
+            pgn.trim_end(),
+            self.san.join(" ")
+        )
+    }
 }
 
 impl AuthoredRepertoire {
@@ -192,6 +250,58 @@ impl AuthoredRepertoire {
                     Ok(LearnerResponse::Missing)
                 )
             })
+    }
+
+    /// Find the shortest route through saved replies to a forecast gap. The
+    /// gap may be reachable via transposition before its first PGN occurrence.
+    pub fn coverage_line(
+        &self,
+        position: &PositionKey,
+        opponent_move: &str,
+        color: LearnerColor,
+    ) -> Result<CoverageLine, ChessError> {
+        if !self.needs_response(position, opponent_move, color) {
+            return Err(invalid("This position no longer needs a response"));
+        }
+        let start = cozy_chess::Board::default();
+        let root = board_key(&start);
+        let mut queue = VecDeque::from([root.clone()]);
+        let mut parents = BTreeMap::from([(root.clone(), None)]);
+        while let Some(before) = queue.pop_front() {
+            if before == *position {
+                break;
+            }
+            if let Some(node) = self.positions.get(&before) {
+                for (played, next) in &node.replies {
+                    if let std::collections::btree_map::Entry::Vacant(entry) =
+                        parents.entry(next.clone())
+                    {
+                        entry.insert(Some((before.clone(), played)));
+                        queue.push_back(next.clone());
+                    }
+                }
+            }
+        }
+        let mut route = vec![opponent_move];
+        let mut at = position;
+        while at != &root {
+            let Some(Some((parent, played))) = parents.get(at) else {
+                return Err(invalid("The gap is outside the authored repertoire"));
+            };
+            route.push(played);
+            at = parent;
+        }
+        let mut board = start;
+        let mut san = Vec::new();
+        for uci in route.into_iter().rev() {
+            san.push(play_san(&mut board, uci)?);
+        }
+        Ok(CoverageLine {
+            board,
+            san,
+            color,
+            answers: BTreeMap::new(),
+        })
     }
 
     /// Extend the current authored anchor when a coverage scan finds a missing reply.
