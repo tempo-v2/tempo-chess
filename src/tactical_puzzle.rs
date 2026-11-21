@@ -2,8 +2,8 @@
 
 use crate::standard_position_canonicalizer::{board_key, parse_position};
 use crate::{
-    Catalog, ChangeKind, ChessAnswer, ChessError, ContentItem, ContentPlan, ContentStatus, TacticLookup, TacticRecord,
-    compile_tactics,
+    Catalog, ChangeKind, ChessAnswer, ChessError, ContentItem, ContentPlan, ContentStatus,
+    TacticLookup, TacticRecord, compile_tactics,
 };
 use tempo_types::TargetId;
 

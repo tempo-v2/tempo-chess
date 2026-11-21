@@ -144,7 +144,9 @@ pub use legal_sequence_grader::{GuidedMoveError, LegalSequenceGrader, acknowledg
 pub use opponent_lead_in::{LeadInEvidence, OpponentLeadIn, archived_tactic_lead_in};
 pub use plan_import::plan_import;
 pub use plan_repertoire_replacement::plan_repertoire_replacement;
-pub use plan_tactic_capture::{TacticCapturePlan, TacticIdentity, TacticLookup, plan_tactic_capture};
+pub use plan_tactic_capture::{
+    TacticCapturePlan, TacticIdentity, TacticLookup, plan_tactic_capture,
+};
 pub use position_canonicalizer::PositionCanonicalizer;
 pub use position_display::{PositionDisplay, legal_move_labels, move_san, project_position};
 pub use position_key::PositionKey;
