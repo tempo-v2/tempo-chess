@@ -130,6 +130,7 @@ impl RepertoireImport<'_> {
                         }],
                     },
                     provenance: vec![self.source.to_owned()],
+                    payoff_origin_version: None,
                     game_capture: None,
                     opponent_lead_in,
                     lesson: Some(RepertoireLesson {

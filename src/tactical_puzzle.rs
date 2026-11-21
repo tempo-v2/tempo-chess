@@ -14,18 +14,42 @@ pub struct TacticalPuzzlePlan {
 }
 
 /// One legal generated tactic before comparison with current content.
-pub struct GeneratedTacticalPuzzle(ContentItem);
+pub struct GeneratedTacticalPuzzle {
+    item: ContentItem,
+    single_root: bool,
+}
 
 impl GeneratedTacticalPuzzle {
+    /// Extend a newly proposed root only when its own engine line settles the tactic.
+    pub fn with_payoff(mut self, variation: &[String]) -> Self {
+        // Optional analysis cannot invalidate an already accepted puzzle.
+        if let Ok(Some(extended)) = extend_generated_tactic(&self.item, variation) {
+            self.item.definition = extended.next.definition;
+        }
+        self
+    }
+
     /// Fetch current items matching any of these keys before calling `plan`.
     pub fn lookup(&self) -> TacticLookup {
-        TacticLookup::from_item(&self.0).expect("generated tactic")
+        TacticLookup::from_item(&self.item).expect("generated tactic")
     }
 
     /// `current` may hold only matches by target, exact identity and source
     /// token. Chess still verifies compatibility and owns provenance merging.
-    pub fn plan(self, current: &Catalog) -> Result<TacticalPuzzlePlan, ChessError> {
-        let mut plan = crate::plan_tactic_capture::plan_tactic_items(current, [&self.0])?;
+    pub fn plan(mut self, current: &Catalog) -> Result<TacticalPuzzlePlan, ChessError> {
+        // Game generation binds a position and its selected root. A later
+        // engine PV may vary; only the versioned upgrade changes a retained line.
+        if self.single_root
+            && let Some(prior) = current.items.values().find(|item| {
+                item.target == self.item.target || item.provenance.contains(&self.item.target.0)
+            })
+            && prior.definition.kind == self.item.definition.kind
+            && prior.definition.decisions.first().map(|d| &d.expected)
+                == self.item.definition.decisions.first().map(|d| &d.expected)
+        {
+            self.item.definition.clone_from(&prior.definition);
+        }
+        let mut plan = crate::plan_tactic_capture::plan_tactic_items(current, [&self.item])?;
         let target = plan.content.changes[0].target.clone();
         let retained = plan
             .content
@@ -139,5 +163,100 @@ fn prepare_line(
         item.definition.scheme = crate::GradingScheme::ForcedMateV1;
     }
     item.definition.validate()?;
-    Ok(GeneratedTacticalPuzzle(item))
+    Ok(GeneratedTacticalPuzzle {
+        item,
+        single_root: !mate && line.len() == 1,
+    })
+}
+
+/// Eligible legacy shape after Store establishes a game training binding.
+/// Recompute the original generated key and exclude items shared with authors.
+pub fn short_generated_decision(item: &ContentItem) -> Option<&crate::Decision> {
+    let [decision] = item.definition.decisions.as_slice() else {
+        return None;
+    };
+    if !item.active()
+        || item.game_capture.is_some()
+        || !decision.autoplay.is_empty()
+        || item.definition.scheme != crate::GradingScheme::ExactSequenceV1
+        || item
+            .provenance
+            .iter()
+            .any(|p| crate::tactic_record::is_source_token(p) && *p != item.target.0)
+    {
+        return None;
+    }
+    let generated = prepare_tactical_puzzle(&decision.fen, &decision.expected, &[]).ok()?;
+    (item.target == generated.item.target && item.definition == generated.item.definition)
+        .then_some(decision)
+}
+
+/// A verified replacement and the exact current item from which it was derived.
+pub struct GeneratedTacticExtension {
+    prior: ContentItem,
+    next: ContentItem,
+}
+impl GeneratedTacticExtension {
+    pub fn prior(&self) -> &ContentItem {
+        &self.prior
+    }
+    pub fn replacement(&self) -> &ContentItem {
+        &self.next
+    }
+}
+
+/// Produce the next definition for the original generated target. Store
+/// verifies the old item and version again when it publishes the replacement.
+pub fn extend_generated_tactic(
+    item: &ContentItem,
+    variation: &[String],
+) -> Result<Option<GeneratedTacticExtension>, ChessError> {
+    let Some(d) = short_generated_decision(item) else {
+        return Ok(None);
+    };
+    let Some(line) = crate::tactical_payoff(&d.fen, &d.expected, variation)? else {
+        return Ok(None);
+    };
+    if line.len() == 1 {
+        return Ok(None);
+    }
+    let mut next = item.clone();
+    next.payoff_origin_version = Some(item.version);
+    next.definition = prepare_line(&d.fen, &line, false, &[])?.item.definition;
+    let last = next
+        .definition
+        .decisions
+        .last()
+        .expect("nonempty verified line");
+    let mut finish = parse_position(&last.fen, true)?;
+    finish.play_unchecked(crate::standard_uci::legal_move(
+        &finish,
+        &last.expected.uci,
+    )?);
+    if finish.status() == cozy_chess::GameStatus::Won {
+        // This scheme replays an alternate mating finish from the last board.
+        // Only use a continuation when earlier decisions cannot already mate.
+        for d in &next.definition.decisions[..next.definition.decisions.len() - 1] {
+            let board = parse_position(&d.fen, true)?;
+            if board.generate_moves(|moves| {
+                moves.into_iter().any(|mv| {
+                    let mut after = board.clone();
+                    after.play_unchecked(mv);
+                    after.status() == cozy_chess::GameStatus::Won
+                })
+            }) {
+                return Ok(None);
+            }
+        }
+        next.definition.scheme = crate::GradingScheme::ForcedMateV1;
+    }
+    next.version.0 = next
+        .version
+        .0
+        .checked_add(1)
+        .ok_or_else(|| ChessError::InvalidContent("content version exhausted".into()))?;
+    Ok(Some(GeneratedTacticExtension {
+        prior: item.clone(),
+        next,
+    }))
 }
