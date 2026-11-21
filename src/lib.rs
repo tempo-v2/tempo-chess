@@ -97,6 +97,7 @@ mod position_key;
 mod repertoire_lesson;
 mod repertoire_line;
 mod repertoire_pgn_parser;
+mod repertoire_study_route;
 mod standard_position_canonicalizer;
 mod structure;
 pub use structure::{
@@ -153,6 +154,7 @@ pub use position_key::PositionKey;
 pub use repertoire_lesson::RepertoireLesson;
 pub use repertoire_line::RepertoireLine;
 pub use repertoire_pgn_parser::RepertoirePgnParser;
+pub use repertoire_study_route::{RepertoireStudyStep, repertoire_study_routes};
 pub use standard_position_canonicalizer::StandardPositionCanonicalizer;
 pub use tactic_pgn::{
     TacticPgnMove, TacticPgnPreview, TacticPgnRoute, TacticPgnRow, TacticPgnSelection,
