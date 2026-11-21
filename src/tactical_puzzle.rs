@@ -2,8 +2,8 @@
 
 use crate::standard_position_canonicalizer::{board_key, parse_position};
 use crate::{
-    Catalog, ChangeKind, ChessAnswer, ChessError, ContentPlan, ContentStatus, TacticRecord,
-    compile_tactics, plan_tactic_capture,
+    Catalog, ChangeKind, ChessAnswer, ChessError, ContentItem, ContentPlan, ContentStatus,
+    TacticLookup, TacticRecord, compile_tactics,
 };
 use tempo_types::TargetId;
 
@@ -11,6 +11,43 @@ use tempo_types::TargetId;
 pub struct TacticalPuzzlePlan {
     pub content: ContentPlan,
     pub target: TargetId,
+}
+
+/// One legal generated tactic before comparison with current content.
+pub struct GeneratedTacticalPuzzle(ContentItem);
+
+impl GeneratedTacticalPuzzle {
+    /// Fetch current items matching any of these keys before calling `plan`.
+    pub fn lookup(&self) -> TacticLookup {
+        TacticLookup::from_item(&self.0).expect("generated tactic")
+    }
+
+    /// `current` may hold only matches by target, exact identity and source
+    /// token. Chess still verifies compatibility and owns provenance merging.
+    pub fn plan(self, current: &Catalog) -> Result<TacticalPuzzlePlan, ChessError> {
+        let mut plan = crate::plan_tactic_capture::plan_tactic_items(current, [&self.0])?;
+        let target = plan.content.changes[0].target.clone();
+        let retained = plan
+            .content
+            .catalog
+            .items
+            .get_mut(&target)
+            .expect("planned tactic");
+        if retained.status == ContentStatus::Quarantined {
+            retained.status = ContentStatus::Active;
+            plan.content.changes[0].kind = ChangeKind::Metadata;
+        }
+        if !retained.active() {
+            return Err(ChessError::InvalidContent(
+                "the equivalent tactical target is inactive".into(),
+            ));
+        }
+        plan.content.catalog.validate()?;
+        Ok(TacticalPuzzlePlan {
+            content: plan.content,
+            target,
+        })
+    }
 }
 
 /// Plan the one engine-selected capture using the existing exact-sequence
@@ -25,13 +62,7 @@ pub fn plan_tactical_puzzle(
     selected: &ChessAnswer,
     provenance: &[String],
 ) -> Result<TacticalPuzzlePlan, ChessError> {
-    plan_line(
-        current,
-        fen,
-        std::slice::from_ref(selected),
-        false,
-        provenance,
-    )
+    prepare_tactical_puzzle(fen, selected, provenance)?.plan(current)
 }
 
 pub fn plan_personal_puzzle(
@@ -39,8 +70,22 @@ pub fn plan_personal_puzzle(
     puzzle: &crate::PersonalPuzzle,
     provenance: &[String],
 ) -> Result<TacticalPuzzlePlan, ChessError> {
-    plan_line(
-        current,
+    prepare_personal_puzzle(puzzle, provenance)?.plan(current)
+}
+
+pub fn prepare_tactical_puzzle(
+    fen: &str,
+    selected: &ChessAnswer,
+    provenance: &[String],
+) -> Result<GeneratedTacticalPuzzle, ChessError> {
+    prepare_line(fen, std::slice::from_ref(selected), false, provenance)
+}
+
+pub fn prepare_personal_puzzle(
+    puzzle: &crate::PersonalPuzzle,
+    provenance: &[String],
+) -> Result<GeneratedTacticalPuzzle, ChessError> {
+    prepare_line(
         &puzzle.fen,
         &puzzle.line,
         puzzle.kind == crate::PersonalPuzzleKind::ForcedMate,
@@ -48,13 +93,12 @@ pub fn plan_personal_puzzle(
     )
 }
 
-fn plan_line(
-    current: &Catalog,
+fn prepare_line(
     fen: &str,
     line: &[ChessAnswer],
     mate: bool,
     provenance: &[String],
-) -> Result<TacticalPuzzlePlan, ChessError> {
+) -> Result<GeneratedTacticalPuzzle, ChessError> {
     let board = parse_position(fen, false)?;
     let position = board_key(&board);
     let mut hash = blake3::Hasher::new();
@@ -76,7 +120,11 @@ fn plan_line(
         label: "From your games".into(),
         provenance: provenance.to_vec(),
     };
-    let mut incoming = compile_tactics(&[record])?;
+    let mut item = compile_tactics(&[record])?
+        .items
+        .into_values()
+        .next()
+        .expect("one generated tactic");
     if mate {
         let mut finish = board.clone();
         for answer in line {
@@ -88,34 +136,8 @@ fn plan_line(
                 "forced mate needs a legal mating line of one or three plies".into(),
             ));
         }
-        incoming
-            .items
-            .values_mut()
-            .next()
-            .expect("one generated tactic")
-            .definition
-            .scheme = crate::GradingScheme::ForcedMateV1;
+        item.definition.scheme = crate::GradingScheme::ForcedMateV1;
     }
-    let mut plan = plan_tactic_capture(current, &incoming)?;
-    let target = plan.content.changes[0].target.clone();
-    let retained = plan
-        .content
-        .catalog
-        .items
-        .get_mut(&target)
-        .expect("planned tactic");
-    if retained.status == ContentStatus::Quarantined {
-        retained.status = ContentStatus::Active;
-        plan.content.changes[0].kind = ChangeKind::Metadata;
-    }
-    if !retained.active() {
-        return Err(ChessError::InvalidContent(
-            "the equivalent tactical target is inactive".into(),
-        ));
-    }
-    plan.content.catalog.validate()?;
-    Ok(TacticalPuzzlePlan {
-        content: plan.content,
-        target,
-    })
+    item.definition.validate()?;
+    Ok(GeneratedTacticalPuzzle(item))
 }

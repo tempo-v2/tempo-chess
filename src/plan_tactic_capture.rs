@@ -103,8 +103,10 @@ pub(super) fn plan_tactic_items<'a>(
     })
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct TacticIdentity {
+/// Exact capture equivalence. Storage may index its serialized value without
+/// interpreting any of the chess fields.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+pub struct TacticIdentity {
     position: PositionKey,
     solution: Vec<String>,
     forced_mate: bool,
@@ -125,6 +127,23 @@ impl TacticIdentity {
                 .flat_map(|decision| std::iter::once(&decision.expected).chain(&decision.autoplay))
                 .map(|answer| answer.uci.clone())
                 .collect(),
+        })
+    }
+}
+
+/// Keys needed to load the complete basis for one addressed capture.
+pub struct TacticLookup {
+    pub target: TargetId,
+    pub identity: TacticIdentity,
+    pub source_tokens: Vec<String>,
+}
+
+impl TacticLookup {
+    pub fn from_item(item: &ContentItem) -> Option<Self> {
+        Some(Self {
+            target: item.target.clone(),
+            identity: TacticIdentity::from_item(item)?,
+            source_tokens: source_tokens(item).map(ToOwned::to_owned).collect(),
         })
     }
 }
