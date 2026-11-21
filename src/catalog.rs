@@ -47,6 +47,13 @@ impl Catalog {
                 ));
             }
             item.definition.validate()?;
+            if item.game_capture.as_ref().is_some_and(|capture| {
+                item.definition.is_repertoire() || capture.capture_id.trim().is_empty()
+            }) {
+                return Err(ChessError::InvalidContent(
+                    "invalid game capture evidence".into(),
+                ));
+            }
             match &item.definition.kind {
                 ContentKind::Repertoire {
                     repertoire,

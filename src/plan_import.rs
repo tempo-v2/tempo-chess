@@ -201,6 +201,9 @@ pub(super) fn version_imported_item(
     item.version = old.version;
     if !item.definition.is_repertoire() {
         item.opponent_lead_in.reconcile(&old.opponent_lead_in);
+        if item.game_capture.is_none() {
+            item.game_capture.clone_from(&old.game_capture);
+        }
     }
     let mut normalized = old.clone();
     normalized.provenance.sort();
@@ -430,4 +433,30 @@ mod tests {
             update.catalog
         );
     }
+}
+#[test]
+fn captured_game_evidence_follows_only_the_verified_definition() {
+    use crate::{GameCapture, START_FEN, TacticRecord, compile_tactics};
+    let record = |answer: &str, label: &str| TacticRecord {
+        namespace: "retained".into(),
+        source_id: "one".into(),
+        solver_fen: START_FEN.into(),
+        solution: vec![answer.into()],
+        label: label.into(),
+        provenance: vec![],
+    };
+    let mut current = compile_tactics(&[record("e2e4", "Original")]).unwrap();
+    let target = record("e2e4", "").target_id();
+    let evidence = GameCapture {
+        capture_id: "source-game".into(),
+    };
+    current.items.get_mut(&target).unwrap().game_capture = Some(evidence.clone());
+    let renamed = compile_tactics(&[record("e2e4", "Renamed")]).unwrap();
+    let metadata = plan_import(&current, &renamed).unwrap();
+    assert_eq!(metadata.catalog.items[&target].game_capture, Some(evidence));
+    assert_eq!(metadata.catalog.items[&target].version, ContentVersion(1));
+    let edited = compile_tactics(&[record("e2e3", "Renamed")]).unwrap();
+    let changed = plan_import(&current, &edited).unwrap();
+    assert_eq!(changed.catalog.items[&target].game_capture, None);
+    assert_eq!(changed.catalog.items[&target].version, ContentVersion(2));
 }

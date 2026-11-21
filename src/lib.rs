@@ -124,7 +124,7 @@ pub use chess_state::ChessState;
 pub use compile_repertoire::compile_repertoire;
 pub use compile_tactics::compile_tactics;
 pub use content_change::ContentChange;
-pub use content_item::ContentItem;
+pub use content_item::{ContentItem, GameCapture};
 pub use content_kind::ContentKind;
 pub use content_parser::ContentParser;
 pub use content_plan::ContentPlan;

@@ -146,7 +146,8 @@ pub fn explain_tactic_move(
                 front: front.clone(),
                 rear: rear.clone(),
             },
-            (Motif::Fork, _) => {
+            // King adjacency omits the safety of the king's proposed capture.
+            (Motif::Fork, _) if attacker.role != PieceRole::King => {
                 let mut targets = pattern.targets;
                 targets.sort_by(|a, b| {
                     (Reverse(a.role as u8), &a.square).cmp(&(Reverse(b.role as u8), &b.square))
@@ -253,6 +254,12 @@ mod tests {
             Some(TacticExplanation::Fork { targets, .. })
                 if targets[0].square == "c5" && targets[1].square == "a1"
         ));
+    }
+
+    #[test]
+    fn a_king_cannot_fork_pieces_it_could_not_capture() {
+        let fen = "8/8/8/4k3/3r1r2/8/5K2/8 w - - 0 1";
+        assert_eq!(explain(fen, "f2e3"), None);
     }
 
     #[test]

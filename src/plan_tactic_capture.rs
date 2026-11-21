@@ -55,7 +55,11 @@ pub(super) fn plan_tactic_items<'a>(
             let retained = catalog.items.get_mut(&target).expect("indexed tactic");
             let before = retained.provenance.clone();
             let before_context = retained.opponent_lead_in.clone();
+            let before_capture = retained.game_capture.clone();
             retained.opponent_lead_in.reconcile(&item.opponent_lead_in);
+            if retained.definition == item.definition && retained.game_capture.is_none() {
+                retained.game_capture.clone_from(&item.game_capture);
+            }
             retained.provenance.extend(item.provenance.iter().cloned());
             if is_source_token(&item.target.0) {
                 retained.provenance.push(item.target.0.clone());
@@ -66,6 +70,7 @@ pub(super) fn plan_tactic_items<'a>(
                 target,
                 kind: if retained.provenance == before
                     && retained.opponent_lead_in == before_context
+                    && retained.game_capture == before_capture
                 {
                     ChangeKind::Unchanged
                 } else {

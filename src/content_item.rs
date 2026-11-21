@@ -30,6 +30,9 @@ pub struct ContentItem {
     pub status: ContentStatus,
     pub definition: ChessDefinition,
     pub provenance: Vec<String>,
+    /// An archived game capture verified against this exact definition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game_capture: Option<GameCapture>,
     /// Evidence for the first opponent move, independent of grading.
     #[serde(default, skip_serializing_if = "crate::LeadInEvidence::is_unavailable")]
     pub opponent_lead_in: crate::LeadInEvidence,
@@ -37,6 +40,13 @@ pub struct ContentItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lesson: Option<RepertoireLesson>,
 }
+
+/// An authoritative capture record whose board and line match the tactic.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GameCapture {
+    pub capture_id: String,
+}
+
 impl ContentItem {
     pub fn exercise(&self) -> Exercise<ChessDefinition> {
         Exercise {
