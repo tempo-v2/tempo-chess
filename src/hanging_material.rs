@@ -1,5 +1,6 @@
 //! One concrete detector using the existing game-detector contract.
 
+use crate::hanging_capture::hanging_capture_target;
 use crate::standard_position_canonicalizer::parse_position;
 use crate::tactical_evaluation::{
     accepted_roots, checked_evaluation, complete_evaluation, evaluation_request, score_order,
@@ -7,10 +8,9 @@ use crate::tactical_evaluation::{
 use crate::{
     BoardSubject, ChessAnswer, ChessError, DetectedMoment, DetectionControl, DetectionOutcome,
     DetectorDescriptor, EvaluationProvenance, EvaluationScore, EvaluationStatus,
-    GameDetectionInput, GameDetector, LearnerColor, PieceRole, PositionPass,
-    TacticalEvaluationRequest, TacticalEvaluator,
+    GameDetectionInput, GameDetector, PositionPass, TacticalEvaluationRequest, TacticalEvaluator,
 };
-use cozy_chess::{Board, Move, Piece, Square, util::display_uci_move};
+use cozy_chess::{Board, Move, util::display_uci_move};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -280,56 +280,17 @@ pub fn hanging_captures(fen: &str) -> Result<Vec<HangingCapture>, ChessError> {
 pub(crate) fn captures_on_board(board: &Board, legal: &[Move]) -> Vec<HangingCapture> {
     let mut captures = Vec::new();
     for &mv in legal {
-        let Some((square, role)) = capture_target(board, mv) else {
-            continue;
-        };
-        let mut after = board.clone();
-        after.play_unchecked(mv);
-        let mut recaptured = false;
-        after.generate_moves(|replies| {
-            recaptured = replies.into_iter().any(|reply| reply.to == mv.to);
-            recaptured
-        });
-        if !recaptured {
+        if let Some(target) = hanging_capture_target(board, mv) {
             captures.push(HangingCapture {
                 answer: ChessAnswer {
                     uci: display_uci_move(board, mv).to_string(),
                 },
-                target: BoardSubject {
-                    square: square.to_string(),
-                    role,
-                    color: LearnerColor::from_board(!board.side_to_move()),
-                },
+                target,
             });
         }
     }
     captures.sort_by(|a, b| a.answer.uci.cmp(&b.answer.uci));
     captures
-}
-
-fn capture_target(board: &Board, mv: Move) -> Option<(Square, PieceRole)> {
-    let square = if board.color_on(mv.to) == Some(!board.side_to_move()) {
-        mv.to
-    } else if board.piece_on(mv.from) == Some(Piece::Pawn)
-        && board.piece_on(mv.to).is_none()
-        && mv.from.file() != mv.to.file()
-    {
-        Square::new(mv.to.file(), mv.from.rank())
-    } else {
-        return None;
-    };
-    if board.color_on(square) != Some(!board.side_to_move()) {
-        return None;
-    }
-    let role = match board.piece_on(square)? {
-        Piece::Pawn => PieceRole::Pawn,
-        Piece::Knight => PieceRole::Knight,
-        Piece::Bishop => PieceRole::Bishop,
-        Piece::Rook => PieceRole::Rook,
-        Piece::Queen => PieceRole::Queen,
-        Piece::King => return None,
-    };
-    Some((square, role))
 }
 
 fn legal_moves(board: &Board) -> Vec<Move> {
@@ -542,7 +503,7 @@ mod position_tests {
         .pop()
         .unwrap()
         .unwrap();
-        let input = GameDetectionInput::new(played.timeline(), LearnerColor::White);
+        let input = GameDetectionInput::new(played.timeline(), crate::LearnerColor::White);
         let position = PositionPass::new(&input, 0).unwrap();
         let captures = captures_on_board(position.board, &position.legal);
         assert!(captures.iter().any(|capture| capture.answer.uci == "a1a7"));
@@ -558,6 +519,9 @@ mod position_tests {
         assert!(!mating_moves.is_empty());
         assert_eq!(position.legal_moves().len(), position.legal.len());
         assert!(position.move_is_mate("f7f8"));
-        assert_eq!(position.piece_at("a7").unwrap().role, PieceRole::Pawn);
+        assert_eq!(
+            position.piece_at("a7").unwrap().role,
+            crate::PieceRole::Pawn
+        );
     }
 }

@@ -39,6 +39,7 @@ pub use authored_repertoire::{
     RepertoireAdherence, legal_model_moves, legal_successors,
 };
 mod game_detector;
+mod hanging_capture;
 mod hanging_material;
 mod personal_tactics;
 mod tactic_explanation;
