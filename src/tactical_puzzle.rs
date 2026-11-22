@@ -19,10 +19,36 @@ pub struct GeneratedTacticalPuzzle {
     single_root: bool,
 }
 
+/// A game proposal whose candidate line passed Chess qualification.
+pub struct QualifiedTacticalPuzzle(GeneratedTacticalPuzzle);
+
+impl QualifiedTacticalPuzzle {
+    pub fn lookup(&self) -> TacticLookup {
+        self.0.lookup()
+    }
+
+    /// Resolve the proposal against retained content, then check the actual
+    /// definition that Study would receive. A historical game-owned match can
+    /// be withheld without losing the source finding or changing that match.
+    pub fn plan(self, current: &Catalog) -> Result<Option<TacticalPuzzlePlan>, ChessError> {
+        let plan = self.0.plan(current)?;
+        let item = &plan.content.catalog.items[&plan.target];
+        if game_generated_definition(item)
+            && crate::ambiguous_hanging_material(&item.definition, &item.verified_tactic)?
+        {
+            return Ok(None);
+        }
+        Ok(Some(plan))
+    }
+}
+
 impl GeneratedTacticalPuzzle {
     /// Admit only a line with a demonstrated motif. Compute the original
     /// generated identity from the selected root before replacing the line.
-    pub fn qualify(mut self, variation: Option<&[String]>) -> Result<Option<Self>, ChessError> {
+    pub fn qualify(
+        mut self,
+        variation: Option<&[String]>,
+    ) -> Result<Option<QualifiedTacticalPuzzle>, ChessError> {
         if !self.single_root {
             let first = &self.item.definition.decisions[0];
             let line: Vec<_> = definition_line(&self.item)
@@ -32,7 +58,7 @@ impl GeneratedTacticalPuzzle {
             if let Some(proof) = crate::recognizable_payoff(&first.fen, &first.expected, &line)? {
                 self.item.verified_tactic = proof.motifs;
             }
-            return Ok(Some(self));
+            return Ok(Some(QualifiedTacticalPuzzle(self)));
         }
         let decision = &self.item.definition.decisions[0];
         let first = [decision.expected.uci.clone()];
@@ -49,7 +75,7 @@ impl GeneratedTacticalPuzzle {
             return Ok(None);
         }
         self.item.verified_tactic = proof.motifs;
-        Ok(Some(self))
+        Ok(Some(QualifiedTacticalPuzzle(self)))
     }
 
     /// Fetch current items matching any of these keys before calling `plan`.
@@ -59,6 +85,7 @@ impl GeneratedTacticalPuzzle {
 
     /// `current` may hold only matches by target, exact identity and source
     /// token. Chess still verifies compatibility and owns provenance merging.
+    /// Game findings use the qualification result's planner before issuance.
     pub fn plan(mut self, current: &Catalog) -> Result<TacticalPuzzlePlan, ChessError> {
         // Game generation binds a position and its selected root. A later
         // engine PV may vary; only the versioned upgrade changes a retained line.

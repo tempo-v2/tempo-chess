@@ -154,21 +154,36 @@ pub fn ambiguous_hanging_material(
     definition: &ChessDefinition,
     motifs: &[PayoffMotif],
 ) -> Result<bool, ChessError> {
-    let (
-        [
-            Decision {
-                fen,
-                expected,
-                autoplay,
-            },
-        ],
-        [motif],
-    ) = (definition.decisions.as_slice(), motifs)
+    let [
+        Decision {
+            fen,
+            expected,
+            autoplay,
+        },
+    ] = definition.decisions.as_slice()
     else {
         return Ok(false);
     };
-    if !autoplay.is_empty()
-        || motif.motif != Motif::HangingMaterial
+    if !autoplay.is_empty() {
+        return Ok(false);
+    }
+    // Older definitions can predate the stored motif. Prove the same
+    // standalone move before making an admission decision for them.
+    let proof;
+    let motifs = if motifs.is_empty() {
+        let Some(found) = recognizable_payoff(fen, expected, std::slice::from_ref(&expected.uci))?
+        else {
+            return Ok(false);
+        };
+        proof = found;
+        proof.motifs.as_slice()
+    } else {
+        motifs
+    };
+    let [motif] = motifs else {
+        return Ok(false);
+    };
+    if motif.motif != Motif::HangingMaterial
         || motif.setup != 0
         || motif.finish != 0
         || motif.material_gain <= 0
@@ -187,9 +202,15 @@ pub fn ambiguous_hanging_material(
     else {
         return Ok(false);
     };
-    Ok(board_moves(&board).into_iter().any(|mv| {
-        mv != expected && captures(&board, mv) && holds(&play(&board, mv), solver, floor)
-    }))
+    Ok(board_moves(&board)
+        .into_iter()
+        .filter(|&mv| mv != expected && captures(&board, mv))
+        .any(|mv| {
+            let after = play(&board, mv);
+            // A checkmating capture has no defensive reply.
+            (after.status() == GameStatus::Won && material(&after, solver) > floor)
+                || holds(&after, solver, floor)
+        }))
 }
 
 fn patterns(step: &Step) -> Vec<MotifCandidate> {
@@ -579,6 +600,59 @@ mod tests {
     }
 
     #[test]
+    fn a_mating_capture_can_also_keep_the_material_gain() {
+        let fen = "7k/6r1/5K2/8/4r1Q1/8/8/8 w - - 0 1";
+        let puzzle = prepare_tactical_puzzle(fen, &"g4e4".into(), &[]).unwrap();
+        assert!(puzzle.qualify(None).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_qualified_line_cannot_reactivate_an_ambiguous_game_definition() {
+        let fen = "8/2b5/3k4/1r1p1r2/3N4/8/8/K7 w - - 0 1";
+        let root = "d4b5".into();
+        let prepare = || prepare_tactical_puzzle(fen, &root, &[]).unwrap();
+        let qualify = || {
+            prepare()
+                .qualify(Some(&pv("d4b5 d6e7 b5c7")))
+                .unwrap()
+                .unwrap()
+        };
+        let legacy = prepare().plan(&Catalog::default()).unwrap();
+        let fresh = qualify().plan(&Catalog::default()).unwrap().unwrap();
+        assert_eq!(
+            fresh.content.catalog.items[&fresh.target]
+                .definition
+                .decisions
+                .len(),
+            2
+        );
+        let mut catalog = legacy.content.catalog;
+        let item = catalog.items.get_mut(&legacy.target).unwrap();
+        item.status = crate::ContentStatus::Quarantined;
+        let proof = recognizable_payoff(fen, &root, &pv("d4b5"))
+            .unwrap()
+            .unwrap();
+        assert!(qualify().plan(&catalog).unwrap().is_none());
+        catalog
+            .items
+            .get_mut(&legacy.target)
+            .unwrap()
+            .verified_tactic = proof.motifs;
+        assert!(qualify().plan(&catalog).unwrap().is_none());
+
+        let authored = catalog.items.get_mut(&legacy.target).unwrap();
+        authored.game_capture = Some(crate::GameCapture {
+            capture_id: "independent-capture".into(),
+        });
+        let approved = qualify().plan(&catalog).unwrap().unwrap();
+        assert_eq!(approved.target, legacy.target);
+        assert_eq!(
+            approved.content.catalog.items[&legacy.target].definition,
+            catalog.items[&legacy.target].definition
+        );
+    }
+
+    #[test]
     fn checking_fork_reaches_bishop_and_rescan_retains_the_target() {
         let root = "d1h5".into();
         let prepare = || prepare_tactical_puzzle(FORK, &root, &[]).unwrap();
@@ -587,6 +661,7 @@ mod tests {
             .unwrap()
             .unwrap()
             .plan(&Catalog::default())
+            .unwrap()
             .unwrap();
         let item = &fresh.content.catalog.items[&fresh.target];
         assert_eq!(item.definition.decisions.len(), 2);
@@ -631,6 +706,7 @@ mod tests {
             .unwrap()
             .unwrap()
             .plan(&authored_catalog)
+            .unwrap()
             .unwrap();
         assert_eq!(repeat.target, authored.target);
         assert_eq!(
@@ -708,6 +784,7 @@ mod tests {
             .unwrap()
             .unwrap()
             .plan(&Catalog::default())
+            .unwrap()
             .unwrap();
         let item = &plan.content.catalog.items[&plan.target];
         use tempo_study::Grader;
@@ -747,6 +824,7 @@ mod tests {
             .unwrap()
             .unwrap()
             .plan(&Catalog::default())
+            .unwrap()
             .unwrap();
         let decisions = &plan.content.catalog.items[&plan.target]
             .definition

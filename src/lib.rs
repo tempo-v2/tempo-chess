@@ -71,9 +71,9 @@ pub use tactical_evaluation::{
     RootScore, ScoreBound, TacticalEvaluationRequest, TacticalEvaluator,
 };
 pub use tactical_puzzle::{
-    GameTacticQualification, GeneratedTacticExtension, GeneratedTacticalPuzzle, TacticalPuzzlePlan,
-    game_generated_definition, plan_personal_puzzle, plan_tactical_puzzle, prepare_personal_puzzle,
-    prepare_tactical_puzzle, requalify_game_tactic,
+    GameTacticQualification, GeneratedTacticExtension, GeneratedTacticalPuzzle,
+    QualifiedTacticalPuzzle, TacticalPuzzlePlan, game_generated_definition, plan_personal_puzzle,
+    plan_tactical_puzzle, prepare_personal_puzzle, prepare_tactical_puzzle, requalify_game_tactic,
 };
 mod played_game_timeline;
 pub use played_game_timeline::{PlayedGameTimeline, PositionOccurrence};
