@@ -1,0 +1,237 @@
+[
+  {
+    "id": "hangingPiece",
+    "name": "Hanging pieces",
+    "group": "Basic motifs"
+  },
+  {
+    "id": "fork",
+    "name": "Forks",
+    "group": "Basic motifs"
+  },
+  {
+    "id": "pin",
+    "name": "Pins",
+    "group": "Basic motifs"
+  },
+  {
+    "id": "skewer",
+    "name": "Skewers",
+    "group": "Basic motifs"
+  },
+  {
+    "id": "discoveredAttack",
+    "name": "Discovered attack",
+    "group": "Basic motifs"
+  },
+  {
+    "id": "trappedPiece",
+    "name": "Trapped pieces",
+    "group": "Basic motifs"
+  },
+  {
+    "id": "attackingF2F7",
+    "name": "Attacking f2 or f7",
+    "group": "Basic motifs"
+  },
+  {
+    "id": "capturingDefender",
+    "name": "Capture the defender",
+    "group": "Basic motifs"
+  },
+  {
+    "id": "doubleCheck",
+    "name": "Double check",
+    "group": "Basic motifs"
+  },
+  {
+    "id": "sacrifice",
+    "name": "Sacrifice",
+    "group": "Basic motifs"
+  },
+  {
+    "id": "attraction",
+    "name": "Attraction",
+    "group": "Advanced motifs"
+  },
+  {
+    "id": "clearance",
+    "name": "Clearance",
+    "group": "Advanced motifs"
+  },
+  {
+    "id": "deflection",
+    "name": "Deflection",
+    "group": "Advanced motifs"
+  },
+  {
+    "id": "defensiveMove",
+    "name": "Defensive move",
+    "group": "Advanced motifs"
+  },
+  {
+    "id": "interference",
+    "name": "Interference",
+    "group": "Advanced motifs"
+  },
+  {
+    "id": "intermezzo",
+    "name": "Intermezzo",
+    "group": "Advanced motifs"
+  },
+  {
+    "id": "quietMove",
+    "name": "Quiet move",
+    "group": "Advanced motifs"
+  },
+  {
+    "id": "xRayAttack",
+    "name": "X-Ray attack",
+    "group": "Advanced motifs"
+  },
+  {
+    "id": "zugzwang",
+    "name": "Zugzwang",
+    "group": "Advanced motifs"
+  },
+  {
+    "id": "calculation2",
+    "name": "2-move calculation",
+    "group": "Calculation"
+  },
+  {
+    "id": "calculation3",
+    "name": "3-move calculation",
+    "group": "Calculation"
+  },
+  {
+    "id": "calculation4",
+    "name": "4-move calculation",
+    "group": "Calculation"
+  },
+  {
+    "id": "mateIn1",
+    "name": "Mate in 1",
+    "group": "Mating depth"
+  },
+  {
+    "id": "mateIn2",
+    "name": "Mate in 2",
+    "group": "Mating depth"
+  },
+  {
+    "id": "mateIn3",
+    "name": "Mate in 3",
+    "group": "Mating depth"
+  },
+  {
+    "id": "mateIn4Plus",
+    "name": "Mate in 4+",
+    "group": "Mating depth"
+  },
+  {
+    "id": "rookEndgame",
+    "name": "Rook endgame",
+    "group": "Endgame tactics"
+  },
+  {
+    "id": "pawnEndgame",
+    "name": "Pawn endgame",
+    "group": "Endgame tactics"
+  },
+  {
+    "id": "anastasiaMate",
+    "name": "Anastasia\u2019s mate",
+    "group": "Named mates"
+  },
+  {
+    "id": "arabianMate",
+    "name": "Arabian mate",
+    "group": "Named mates"
+  },
+  {
+    "id": "backRankMate",
+    "name": "Back rank mate",
+    "group": "Named mates"
+  },
+  {
+    "id": "balestraMate",
+    "name": "Balestra mate",
+    "group": "Named mates"
+  },
+  {
+    "id": "blindSwineMate",
+    "name": "Blind Swine mate",
+    "group": "Named mates"
+  },
+  {
+    "id": "bodenMate",
+    "name": "Boden\u2019s mate",
+    "group": "Named mates"
+  },
+  {
+    "id": "cornerMate",
+    "name": "Corner mate",
+    "group": "Named mates"
+  },
+  {
+    "id": "doubleBishopMate",
+    "name": "Double bishop mate",
+    "group": "Named mates"
+  },
+  {
+    "id": "dovetailMate",
+    "name": "Dovetail mate",
+    "group": "Named mates"
+  },
+  {
+    "id": "epauletteMate",
+    "name": "Epaulette mate",
+    "group": "Named mates"
+  },
+  {
+    "id": "hookMate",
+    "name": "Hook mate",
+    "group": "Named mates"
+  },
+  {
+    "id": "killBoxMate",
+    "name": "Kill box mate",
+    "group": "Named mates"
+  },
+  {
+    "id": "pillsburysMate",
+    "name": "Pillsbury\u2019s mate",
+    "group": "Named mates"
+  },
+  {
+    "id": "morphysMate",
+    "name": "Morphy\u2019s mate",
+    "group": "Named mates"
+  },
+  {
+    "id": "operaMate",
+    "name": "Opera mate",
+    "group": "Named mates"
+  },
+  {
+    "id": "swallowstailMate",
+    "name": "Swallow\u2019s tail mate",
+    "group": "Named mates"
+  },
+  {
+    "id": "triangleMate",
+    "name": "Triangle mate",
+    "group": "Named mates"
+  },
+  {
+    "id": "vukovicMate",
+    "name": "Vukovi\u0107 mate",
+    "group": "Named mates"
+  },
+  {
+    "id": "smotheredMate",
+    "name": "Smothered mate",
+    "group": "Named mates"
+  }
+]

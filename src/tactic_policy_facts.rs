@@ -31,16 +31,12 @@ impl TacticPolicyFacts {
     }
 
     /// Normalize the historical transfer/catalog encoding at import or migration.
-    /// The caller supplies the authoritative vocabulary used by its theme settings.
-    /// Once normalized, read the typed facts without interpreting display fields.
-    pub fn from_legacy_metadata<'a>(
-        entries: impl IntoIterator<Item = &'a str>,
-        is_known_theme: impl Fn(&str) -> bool,
-    ) -> Self {
+    /// Once normalized, read typed facts without interpreting display fields.
+    pub fn from_legacy_metadata<'a>(entries: impl IntoIterator<Item = &'a str>) -> Self {
         let theme_ids = entries
             .into_iter()
             .filter_map(legacy_theme)
-            .filter(|theme| is_known_theme(theme))
+            .filter(|theme| crate::known_tactic_theme(theme))
             .map(str::to_owned)
             .collect();
         Self { theme_ids }
@@ -89,20 +85,13 @@ mod tests {
             r#"tempo1:catalog-metadata:{"Motif":"fork","Difficulty":"hard","DeckId":"fork-hard-01","DeckPosition":2}"#,
             r#"tempo1:catalog-metadata:{"Motif":"pin","Difficulty":"advanced","DeckId":"pin-advanced-03","DeckPosition":1}"#,
         ];
-        let facts = TacticPolicyFacts::from_legacy_metadata(entries, |theme| {
-            matches!(theme, "fork" | "pin")
-        });
+        let facts = TacticPolicyFacts::from_legacy_metadata(entries);
         assert_eq!(
             facts.theme_ids(),
             &BTreeSet::from(["fork".into(), "pin".into()])
         );
         let reformatted = [entries[2], "unrelated attribution", entries[0], entries[1]];
-        assert_eq!(
-            TacticPolicyFacts::from_legacy_metadata(reformatted, |theme| {
-                matches!(theme, "fork" | "pin")
-            }),
-            facts,
-        );
+        assert_eq!(TacticPolicyFacts::from_legacy_metadata(reformatted), facts,);
     }
 
     #[test]
@@ -120,7 +109,7 @@ mod tests {
         ];
         for entry in entries {
             assert_eq!(
-                TacticPolicyFacts::from_legacy_metadata([entry], |theme| theme == "fork"),
+                TacticPolicyFacts::from_legacy_metadata([entry]),
                 TacticPolicyFacts::default(),
                 "{entry}",
             );
