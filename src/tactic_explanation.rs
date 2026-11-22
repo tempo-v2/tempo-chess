@@ -6,7 +6,7 @@ use crate::personal_tactics::{
 use crate::standard_position_canonicalizer::parse_position;
 use crate::standard_uci::legal_move;
 use crate::{BoardSubject, ChessAnswer, ChessError, Motif, PieceRole};
-use cozy_chess::{Board, GameStatus, Piece, Square};
+use cozy_chess::{Board, GameStatus, Move, Piece, Square};
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 
@@ -51,13 +51,17 @@ pub enum TacticExplanation {
     HangingPiece {
         captured: BoardSubject,
     },
+    WinningExchange {
+        captured: BoardSubject,
+        defender: BoardSubject,
+    },
 }
 
 impl TacticExplanation {
     fn order(&self) -> (u8, &str, &str, &str) {
         match self {
             Self::MatingLine | Self::MateInOne { .. } => (0, "", "", ""),
-            Self::HangingPiece { .. } => (7, "", "", ""),
+            Self::HangingPiece { .. } | Self::WinningExchange { .. } => (7, "", "", ""),
             Self::Pin {
                 attacker,
                 front,
@@ -191,6 +195,45 @@ fn payoff_subjects<'a>(
         last.filter(|_| gain_survives),
         board.side_to_move() != solver && board.status() == GameStatus::Won,
     ))
+}
+
+// Prove a material gain against the sole immediate recapture. Require the
+// second attacker to be available in the original position as well as after
+// the exchange, so an opened line alone cannot earn this explanation.
+fn winning_exchange(board: &Board, after: &Board, mv: Move) -> Option<TacticExplanation> {
+    let solver = board.side_to_move();
+    if board.color_on(mv.to) != Some(!solver) || mv.promotion.is_some() {
+        return None;
+    }
+    let mut recaptures = Vec::new();
+    after.generate_moves(|moves| {
+        recaptures.extend(moves.into_iter().filter(|reply| reply.to == mv.to));
+        recaptures.len() > 1
+    });
+    let &[reply] = recaptures.as_slice() else {
+        return None;
+    };
+    if reply.promotion.is_some() {
+        return None;
+    }
+    let mut exchanged = after.clone();
+    exchanged.play_unchecked(reply);
+    let initial = crate::tactic_payoff::material(board, solver);
+    let wins = exchanged.generate_moves(|moves| {
+        moves.into_iter().any(|retake| {
+            if retake.to != mv.to || retake.promotion.is_some() || !board.is_legal(retake) {
+                return false;
+            }
+            let mut settled = exchanged.clone();
+            settled.play_unchecked(retake);
+            crate::tactic_payoff::material(&settled, solver) > initial
+                && !settled.generate_moves(|moves| moves.into_iter().any(|reply| reply.to == mv.to))
+        })
+    });
+    wins.then(|| TacticExplanation::WinningExchange {
+        captured: subject(board, mv.to),
+        defender: subject(board, reply.from),
+    })
 }
 
 fn explain_with_payoff(
@@ -327,12 +370,16 @@ fn explain_with_payoff(
     if let Some(captured) = hanging_capture_target(&board, mv) {
         explanations.push(TacticExplanation::HangingPiece { captured });
     }
+    if let Some(exchange) = winning_exchange(&board, &after, mv) {
+        explanations.push(exchange);
+    }
     Ok(explanations.into_iter().min_by_key(|hint| {
         let priority = match hint {
             _ if supported(hint) => 0,
             TacticExplanation::PinCapture { .. } => 1,
-            TacticExplanation::HangingPiece { .. } => 2,
-            _ => 3,
+            TacticExplanation::WinningExchange { .. } => 2,
+            TacticExplanation::HangingPiece { .. } => 3,
+            _ => 4,
         };
         (priority, hint.order().0)
     }))
@@ -359,6 +406,55 @@ mod tests {
             Some(TacticExplanation::HangingPiece { captured })
                 if captured.square == "d5" && captured.role == PieceRole::Pawn
         ));
+    }
+
+    #[test]
+    fn the_winning_exchange_explains_the_knight_capture_ahead_of_the_pin() {
+        let fen = "r1bqk1r1/ppp1bpPp/2n5/8/2pN4/8/PPP2PPP/RNBQR1K1 b q - 0 1";
+        let after_trade = "r1b1k1r1/ppp1bpPp/2n5/8/2pQ4/8/PPP2PPP/RNB1R1K1 b q - 0 2";
+        let clue = explain_tactic_decision(&[
+            crate::Decision {
+                fen: fen.into(),
+                expected: "d8d4".into(),
+                autoplay: vec!["d1d4".into()],
+            },
+            crate::Decision {
+                fen: after_trade.into(),
+                expected: "c6d4".into(),
+                autoplay: vec![],
+            },
+        ])
+        .unwrap();
+        assert!(matches!(
+            clue,
+            Some(TacticExplanation::WinningExchange { captured, defender })
+                if captured.square == "d4" && captured.role == PieceRole::Knight
+                    && defender.square == "d1" && defender.role == PieceRole::Queen
+        ));
+    }
+
+    #[test]
+    fn winning_exchange_requires_legal_backup_one_defender_and_a_settled_gain() {
+        for fen in [
+            // No backup.
+            "2kq4/8/8/8/3N4/8/5P2/3Q2K1 b - - 0 1",
+            // The c1 rook pins the knight to its king.
+            "2kq4/8/2n5/8/3N4/8/5P2/2RQ2K1 b - - 0 1",
+            // The white knight can also recapture.
+            "2kq4/8/2n5/8/3N4/5N2/5P2/3Q2K1 b - - 0 1",
+            // A queen for a rook and knight loses material.
+            "2kq4/8/2n5/8/3N4/8/5P2/3R2K1 b - - 0 1",
+            // The bishop can take the black knight after the queens come off.
+            "2kq4/8/2n5/8/3N4/4Q3/5B2/6K1 b - - 0 1",
+        ] {
+            assert!(
+                !matches!(
+                    explain(fen, "d8d4"),
+                    Some(TacticExplanation::WinningExchange { .. })
+                ),
+                "{fen}"
+            );
+        }
     }
 
     #[test]
