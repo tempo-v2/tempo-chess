@@ -71,9 +71,6 @@ impl GeneratedTacticalPuzzle {
             return Ok(None);
         };
         self.item.definition = proved_definition(&decision.fen, &proof)?;
-        if crate::ambiguous_hanging_material(&self.item.definition, &proof.motifs)? {
-            return Ok(None);
-        }
         self.item.verified_tactic = proof.motifs;
         Ok(Some(QualifiedTacticalPuzzle(self)))
     }

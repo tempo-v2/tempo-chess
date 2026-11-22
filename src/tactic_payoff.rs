@@ -565,7 +565,13 @@ mod tests {
         ] {
             let prepare = || prepare_tactical_puzzle(fen, &expected, &[]).unwrap();
             assert_eq!(
-                prepare().qualify(None).unwrap().is_none(),
+                prepare()
+                    .qualify(None)
+                    .unwrap()
+                    .unwrap()
+                    .plan(&Catalog::default())
+                    .unwrap()
+                    .is_none(),
                 withheld,
                 "{fen}"
             );
@@ -591,19 +597,22 @@ mod tests {
             let puzzle = prepare_tactical_puzzle(equal, &answer.into(), &[]).unwrap();
             // Either rook capture gains five immediately but retains only
             // four after ...gxh2. Both are equally valid ways to win material.
-            assert!(puzzle.qualify(None).unwrap().is_none());
+            let qualified = puzzle.qualify(None).unwrap().unwrap();
+            assert!(qualified.plan(&Catalog::default()).unwrap().is_none());
         }
 
         let smaller_alternative = equal.replace("1r1p1r2", "1r1p1b2");
         let puzzle = prepare_tactical_puzzle(&smaller_alternative, &"d4b5".into(), &[]).unwrap();
-        assert!(puzzle.qualify(None).unwrap().is_some());
+        let qualified = puzzle.qualify(None).unwrap().unwrap();
+        assert!(qualified.plan(&Catalog::default()).unwrap().is_some());
     }
 
     #[test]
     fn a_mating_capture_can_also_keep_the_material_gain() {
         let fen = "7k/6r1/5K2/8/4r1Q1/8/8/8 w - - 0 1";
         let puzzle = prepare_tactical_puzzle(fen, &"g4e4".into(), &[]).unwrap();
-        assert!(puzzle.qualify(None).unwrap().is_none());
+        let qualified = puzzle.qualify(None).unwrap().unwrap();
+        assert!(qualified.plan(&Catalog::default()).unwrap().is_none());
     }
 
     #[test]
@@ -617,6 +626,8 @@ mod tests {
                 .unwrap()
                 .unwrap()
         };
+        let short = || prepare().qualify(None).unwrap().unwrap();
+        assert!(short().plan(&Catalog::default()).unwrap().is_none());
         let legacy = prepare().plan(&Catalog::default()).unwrap();
         let fresh = qualify().plan(&Catalog::default()).unwrap().unwrap();
         assert_eq!(
@@ -626,6 +637,9 @@ mod tests {
                 .len(),
             2
         );
+        let retained_longer = short().plan(&fresh.content.catalog).unwrap().unwrap();
+        assert_eq!(retained_longer.target, fresh.target);
+        assert_eq!(retained_longer.content.catalog, fresh.content.catalog);
         let mut catalog = legacy.content.catalog;
         let item = catalog.items.get_mut(&legacy.target).unwrap();
         item.status = crate::ContentStatus::Quarantined;
@@ -645,7 +659,10 @@ mod tests {
             capture_id: "independent-capture".into(),
         });
         let approved = qualify().plan(&catalog).unwrap().unwrap();
+        let authored_short = short().plan(&catalog).unwrap().unwrap();
         assert_eq!(approved.target, legacy.target);
+        assert_eq!(authored_short.target, legacy.target);
+        assert_eq!(authored_short.content.catalog, approved.content.catalog);
         assert_eq!(
             approved.content.catalog.items[&legacy.target].definition,
             catalog.items[&legacy.target].definition
