@@ -92,8 +92,8 @@ impl TacticExplanation {
     }
 }
 
-/// Describe a concrete effect of one legal move, without evaluating alternatives
-/// or continuations. The caller must already have authorized revealing this move.
+/// Explain a revealed legal move using its immediate effects and, for captures,
+/// a bounded exchange on the capture square. The caller authorizes disclosure.
 pub fn explain_tactic_move(
     fen: &str,
     correction: &ChessAnswer,
@@ -454,6 +454,21 @@ mod tests {
                 ),
                 "{fen}"
             );
+        }
+    }
+
+    #[test]
+    fn winning_exchange_proves_backup_and_material_on_the_capture_square() {
+        for fen in [
+            // A second knight can also capture on d4.
+            "2kq4/8/2n5/5n2/3N4/8/5P2/3Q2K1 b - - 0 1",
+            // White can win a rook elsewhere after the same winning d4 exchange.
+            "r1kq4/8/2n5/8/3N4/8/5PB1/3Q2K1 b - - 0 1",
+        ] {
+            assert!(matches!(
+                explain(fen, "d8d4"),
+                Some(TacticExplanation::WinningExchange { .. })
+            ));
         }
     }
 
