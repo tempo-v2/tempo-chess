@@ -178,11 +178,17 @@ pub fn ambiguous_hanging_material(
     let board = parse_position(fen, true)?;
     let expected = legal_move(&board, &expected.uci)?;
     let solver = board.side_to_move();
-    // The payoff check uses a strict comparison, so this requires keeping
-    // at least the established gain through the immediate defenses.
-    let minimum = material(&play(&board, expected), solver) - 1;
+    let after_expected = play(&board, expected);
+    // Find the strongest material floor the original capture can keep.
+    // The payoff check is strict, so a floor of n proves retention of n + 1.
+    let Some(floor) = (material(&board, solver)..material(&after_expected, solver))
+        .rev()
+        .find(|&floor| holds(&after_expected, solver, floor))
+    else {
+        return Ok(false);
+    };
     Ok(board_moves(&board).into_iter().any(|mv| {
-        mv != expected && captures(&board, mv) && holds(&play(&board, mv), solver, minimum)
+        mv != expected && captures(&board, mv) && holds(&play(&board, mv), solver, floor)
     }))
 }
 
@@ -555,6 +561,21 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_game_capture_drill_compares_gains_after_defenses() {
+        let equal = "7k/8/8/1r1p1r2/3N4/6p1/7P/K7 w - - 0 1";
+        for answer in ["d4b5", "d4f5"] {
+            let puzzle = prepare_tactical_puzzle(equal, &answer.into(), &[]).unwrap();
+            // Either rook capture gains five immediately but retains only
+            // four after ...gxh2. Both are equally valid ways to win material.
+            assert!(puzzle.qualify(None).unwrap().is_none());
+        }
+
+        let smaller_alternative = equal.replace("1r1p1r2", "1r1p1b2");
+        let puzzle = prepare_tactical_puzzle(&smaller_alternative, &"d4b5".into(), &[]).unwrap();
+        assert!(puzzle.qualify(None).unwrap().is_some());
     }
 
     #[test]
