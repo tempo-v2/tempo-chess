@@ -35,8 +35,8 @@ mod fixture_comparator;
 mod fixture_parser;
 mod game_comparator;
 pub use authored_repertoire::{
-    AuthoredRepertoire, CoverageLine, DepartureKind, GapDraft, LearnerResponse, OpponentGap,
-    RepertoireAdherence, legal_model_moves, legal_successors,
+    AuthoredRepertoire, CoverageLine, CoverageStart, DepartureKind, GapDraft, LearnerResponse,
+    OpponentGap, RepertoireAdherence, legal_model_moves, legal_successors,
 };
 mod game_detector;
 mod hanging_capture;
@@ -174,3 +174,6 @@ mod game_report_facts;
 pub use game_report_facts::{
     GameReportFacts, GameTimeControl, LearnerGameResult, game_report_facts,
 };
+
+mod opening_partition;
+pub use opening_partition::partition_black_openings;
