@@ -171,6 +171,11 @@ fn prepare_line(
         .next()
         .expect("one generated tactic");
     if mate {
+        if line.len() == 3 && !crate::personal_tactics::mate_moves(&board).is_empty() {
+            return Err(ChessError::InvalidContent(
+                "the stored mating finish would be ambiguous with an earlier mate".into(),
+            ));
+        }
         let mut finish = board.clone();
         for answer in line {
             let mv = crate::standard_uci::legal_move(&finish, &answer.uci)?;

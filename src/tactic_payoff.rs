@@ -2,7 +2,9 @@
 use crate::{
     BoardSubject, ChessAnswer, ChessError, Motif, MotifCandidate,
     hanging_capture::hanging_capture_target,
-    personal_tactics::{absolute_pins, collect_attack_patterns, pin_blocks_recapture, subject},
+    personal_tactics::{
+        absolute_pins, collect_attack_patterns, mate_moves, pin_blocks_recapture, subject,
+    },
     standard_position_canonicalizer::parse_position,
     standard_uci::legal_move,
 };
@@ -176,22 +178,37 @@ fn proved_threat(step: &Step, finish: &Step, baseline: i32) -> Option<MotifCandi
     patterns(step).into_iter().find(|pattern| {
         uses_threat(pattern, &finish.before, finish.mv)
             && holds(&finish.after, solver, baseline)
-            && board_moves(&step.after).into_iter().all(|defense| {
-                let reply = play(&step.after, defense);
-                board_moves(&reply).into_iter().any(|capture| {
-                    let defended_target = captures(&reply, capture)
-                        && capture.to == defense.to
-                        && pattern.targets.iter().any(|target| {
-                            target.square.parse::<Square>().ok() == Some(defense.from)
-                        });
-                    (uses_threat(pattern, &reply, capture) || defended_target)
-                        && holds(&play(&reply, capture), solver, baseline)
-                })
-            })
+            && forces_threat(&step.after, pattern, solver, baseline)
     })
 }
 
-fn connected(previous: &Step, reply: &Step, step: &Step) -> bool {
+fn forces_threat(after: &Board, pattern: &MotifCandidate, solver: Color, baseline: i32) -> bool {
+    board_moves(after).into_iter().all(|defense| {
+        let reply = play(after, defense);
+        board_moves(&reply).into_iter().any(|capture| {
+            let defended_target = captures(&reply, capture)
+                && capture.to == defense.to
+                && pattern
+                    .targets
+                    .iter()
+                    .any(|target| target.square.parse::<Square>().ok() == Some(defense.from));
+            (uses_threat(pattern, &reply, capture) || defended_target)
+                && holds(&play(&reply, capture), solver, baseline)
+        })
+    })
+}
+
+fn forces_mate_next(after: &Board) -> bool {
+    after.status() == GameStatus::Ongoing
+        && board_moves(after).into_iter().all(|defense| {
+            let reply = play(after, defense);
+            board_moves(&reply)
+                .into_iter()
+                .any(|mate| play(&reply, mate).status() == GameStatus::Won)
+        })
+}
+
+fn connected(previous: &Step, reply: &Step, step: &Step, motif: &MotifCandidate) -> bool {
     let forcing = !previous.after.checkers().is_empty();
     if forcing {
         let Ok(earlier_move) = legal_move(&previous.before, &step.answer.uci) else {
@@ -213,9 +230,26 @@ fn connected(previous: &Step, reply: &Step, step: &Step) -> bool {
                     material(&previous.before, step.before.side_to_move()),
                 );
         }
-        // The forcing move gives time to create a fresh attack with this
-        // move. Proof below still requires a target to be won.
-        return true;
+        if motif.motif == Motif::MateInTwo {
+            return !forces_mate_next(&earlier);
+        }
+        let prior_setup = Step {
+            before: previous.before.clone(),
+            after: earlier,
+            mv: earlier_move,
+            answer: step.answer.clone(),
+        };
+        let solver = prior_setup.before.side_to_move();
+        let baseline = material(&prior_setup.before, solver);
+        // A check links the next setup only when it created or enabled the
+        // specific winning motif. A second tactic already available in the
+        // same form is a separate lesson.
+        return !patterns(&prior_setup).into_iter().any(|prior| {
+            prior.motif == motif.motif
+                && prior.attackers == motif.attackers
+                && prior.targets == motif.targets
+                && forces_threat(&prior_setup.after, &prior, solver, baseline)
+        });
     }
     // A quiet finish may chain when the defender answers an attack created
     // by that finish and in doing so uncovers the next winning capture.
@@ -303,11 +337,6 @@ pub fn recognizable_payoff(
     let mut index = 0;
     while let Some(step) = steps.get(index) {
         let previous = index.checked_sub(2).map(|i| &steps[i]);
-        if let Some(previous) = previous
-            && !connected(previous, &steps[index - 1], step)
-        {
-            break;
-        }
         let baseline = material(&step.before, solver);
         let next = steps.get(index + 2);
         let mut finish = index;
@@ -331,12 +360,7 @@ pub fn recognizable_payoff(
             capture_motif(step)
         } else if let Some(next) = next
             && next.after.status() == GameStatus::Won
-            && board_moves(&step.after).into_iter().all(|defense| {
-                let reply = play(&step.after, defense);
-                board_moves(&reply)
-                    .into_iter()
-                    .any(|mate| play(&reply, mate).status() == GameStatus::Won)
-            })
+            && forces_mate_next(&step.after)
         {
             finish = index + 2;
             MotifCandidate {
@@ -394,7 +418,23 @@ pub fn recognizable_payoff(
         } else {
             break;
         };
+        if let Some(previous) = previous
+            && !connected(previous, &steps[index - 1], step, &motif)
+        {
+            break;
+        }
         let end = &steps[finish].after;
+        // A saved alternate mate replays from the final decision's board.
+        // Keep the last complete material payoff if a mating extension
+        // would allow an earlier finish the saved attempt cannot address.
+        if end.status() == GameStatus::Won
+            && steps[..finish]
+                .iter()
+                .step_by(2)
+                .any(|earlier| !mate_moves(&earlier.before).is_empty())
+        {
+            break;
+        }
         motifs.push(PayoffMotif {
             setup: index,
             finish,
@@ -516,6 +556,21 @@ mod tests {
     }
 
     #[test]
+    fn a_check_does_not_join_a_fork_already_available() {
+        let fen = "n6k/8/3n1n2/8/4P3/8/8/RK6 w - - 0 1";
+        let separate = pv("e4e5 d6c4 e5f6");
+        let fork = recognizable_payoff(fen, &"e4e5".into(), &separate)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fork.motifs[0].motif, Motif::Fork);
+        let chain = pv("a1a8 h8h7 e4e5 d6c4 e5f6");
+        let proof = recognizable_payoff(fen, &"a1a8".into(), &chain)
+            .unwrap()
+            .unwrap();
+        assert_eq!(proof.line, [ChessAnswer::from("a1a8")]);
+    }
+
+    #[test]
     fn connected_tactics_can_take_more_than_three_learner_moves() {
         // Qxc4+ brings the king to b2, exposing the queen to a rook pin.
         // Taking the queen checks again and leads directly to a queen fork.
@@ -615,7 +670,7 @@ mod tests {
 
     #[test]
     fn checking_capture_can_chain_directly_into_mate() {
-        let fen = "8/8/8/4r3/5Q2/K7/8/k7 w - - 0 1";
+        let fen = "8/8/8/4r3/5Q2/K7/3p4/k7 w - - 0 1";
         assert_eq!(
             tactical_payoff(fen, &"f4e5".into(), &pv("f4e5 a1b1 e5b2"))
                 .unwrap()
@@ -624,6 +679,20 @@ mod tests {
                 .iter()
                 .map(|uci| ChessAnswer::from(uci.as_str()))
                 .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_mating_tail_does_not_admit_an_unreplayable_early_mate() {
+        let fen = "8/8/8/4r3/5Q2/K7/8/k2N4 w - - 0 1";
+        let board = parse_position(fen, true).unwrap();
+        assert!(mate_moves(&board).contains(&ChessAnswer::from("f4c1")));
+        let line = pv("f4e5 a1b1 e5b2");
+        assert_eq!(
+            tactical_payoff(fen, &"f4e5".into(), &line)
+                .unwrap()
+                .unwrap(),
+            [ChessAnswer::from("f4e5")]
         );
     }
 

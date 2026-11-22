@@ -41,6 +41,16 @@ pub struct TacticRecognition {
     pub outcome: TacticalOutcome,
 }
 
+impl TacticRecognition {
+    /// A completed search can establish that none of its candidate roots
+    /// demonstrated an opportunity. Keep that result separate from pending work.
+    pub fn has_opportunity(&self, motif: Option<Motif>) -> bool {
+        self.motifs
+            .iter()
+            .any(|found| motif.is_none_or(|wanted| wanted == *found))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct MotifCandidate {
     pub motif: Motif,
@@ -527,7 +537,7 @@ fn moves(board: &Board) -> Vec<Move> {
     moves
 }
 
-fn mate_moves(board: &Board) -> Vec<ChessAnswer> {
+pub(super) fn mate_moves(board: &Board) -> Vec<ChessAnswer> {
     if board.status() != GameStatus::Ongoing {
         return vec![];
     }
