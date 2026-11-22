@@ -1,6 +1,6 @@
 //! Verify the connected motifs demonstrated by a candidate game continuation.
 use crate::{
-    BoardSubject, ChessAnswer, ChessError, Motif, MotifCandidate,
+    BoardSubject, ChessAnswer, ChessDefinition, ChessError, Decision, Motif, MotifCandidate,
     hanging_capture::hanging_capture_target,
     personal_tactics::{
         absolute_pins, collect_attack_patterns, mate_moves, pin_blocks_recapture, subject,
@@ -145,6 +145,45 @@ fn holds(board: &Board, solver: Color, baseline: i32) -> bool {
             }
             holds_after_response(board, reply, solver, baseline)
         })
+}
+
+/// Whether a verified one-move hanging-material lesson has another capture
+/// that independently retains at least the lesson's material gain.
+/// Call for game-owned lessons at qualification or when rechecking a verdict.
+pub fn ambiguous_hanging_material(
+    definition: &ChessDefinition,
+    motifs: &[PayoffMotif],
+) -> Result<bool, ChessError> {
+    let (
+        [
+            Decision {
+                fen,
+                expected,
+                autoplay,
+            },
+        ],
+        [motif],
+    ) = (definition.decisions.as_slice(), motifs)
+    else {
+        return Ok(false);
+    };
+    if !autoplay.is_empty()
+        || motif.motif != Motif::HangingMaterial
+        || motif.setup != 0
+        || motif.finish != 0
+        || motif.material_gain <= 0
+    {
+        return Ok(false);
+    }
+    let board = parse_position(fen, true)?;
+    let expected = legal_move(&board, &expected.uci)?;
+    let solver = board.side_to_move();
+    // The payoff check uses a strict comparison, so this requires keeping
+    // at least the established gain through the immediate defenses.
+    let minimum = material(&play(&board, expected), solver) - 1;
+    Ok(board_moves(&board).into_iter().any(|mv| {
+        mv != expected && captures(&board, mv) && holds(&play(&board, mv), solver, minimum)
+    }))
 }
 
 fn patterns(step: &Step) -> Vec<MotifCandidate> {
@@ -482,6 +521,40 @@ mod tests {
 
     fn pv(line: &str) -> Vec<String> {
         line.split_whitespace().map(str::to_owned).collect()
+    }
+
+    #[test]
+    fn a_game_capture_drill_requires_one_proven_capture() {
+        use crate::{GameTacticQualification, requalify_game_tactic};
+
+        let ambiguous = "2k3rr/ppp5/1n2P2p/4Nn2/3P2pP/2N5/P4PP1/R4RK1 b - - 0 1";
+        let single = ambiguous.replace("3P2pP", "3P2p1");
+        let defended_alternative = ambiguous.replace("R4RK1", "5RKR");
+        let expected = "f5d4".into();
+        for (fen, withheld) in [
+            (ambiguous, true),
+            (single.as_str(), false),
+            (defended_alternative.as_str(), false),
+        ] {
+            let prepare = || prepare_tactical_puzzle(fen, &expected, &[]).unwrap();
+            assert_eq!(
+                prepare().qualify(None).unwrap().is_none(),
+                withheld,
+                "{fen}"
+            );
+
+            let old = prepare().plan(&Catalog::default()).unwrap();
+            let mut item = old.content.catalog.items[&old.target].clone();
+            for label in ["From your games", "Renamed", ""] {
+                item.label = label.into();
+                assert_eq!(
+                    requalify_game_tactic(&item, &pv("f5d4")).unwrap()
+                        == GameTacticQualification::Withheld,
+                    withheld,
+                    "{fen}, {label}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -44,6 +44,7 @@ mod hanging_material;
 mod personal_tactics;
 mod tactic_explanation;
 mod tactic_payoff;
+pub use tactic_payoff::ambiguous_hanging_material;
 pub use tactic_payoff::{PayoffMotif, TacticalPayoff, recognizable_payoff, tactical_payoff};
 mod tactical_evaluation;
 mod tactical_puzzle;

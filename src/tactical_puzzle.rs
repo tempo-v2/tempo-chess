@@ -45,6 +45,9 @@ impl GeneratedTacticalPuzzle {
             return Ok(None);
         };
         self.item.definition = proved_definition(&decision.fen, &proof)?;
+        if crate::ambiguous_hanging_material(&self.item.definition, &proof.motifs)? {
+            return Ok(None);
+        }
         self.item.verified_tactic = proof.motifs;
         Ok(Some(self))
     }
@@ -277,6 +280,9 @@ pub fn requalify_game_tactic(
         return Ok(GameTacticQualification::Withheld);
     };
     let definition = proved_definition(&first.fen, &proof)?;
+    if crate::ambiguous_hanging_material(&definition, &proof.motifs)? {
+        return Ok(GameTacticQualification::Withheld);
+    }
     if definition == item.definition && proof.motifs == item.verified_tactic {
         return Ok(GameTacticQualification::Kept);
     }
