@@ -66,6 +66,15 @@ pub enum LearnerResponse<'a> {
     Missing,
 }
 
+/// A verified authored prefix and the available next moves on its exact route.
+#[derive(Serialize)]
+pub struct CoverageStart {
+    pub san: Vec<String>,
+    pub choices: BTreeMap<String, String>,
+    pub position: PositionKey,
+    pub next_learner_move: u16,
+}
+
 /// A legal append-only route being drafted after a verified forecast gap.
 #[derive(Clone)]
 pub struct CoverageLine {
@@ -120,7 +129,11 @@ impl CoverageLine {
         Ok(san)
     }
 
-    fn into_gap_draft(mut self, pgn: &str, response: Option<&str>) -> Result<GapDraft, ChessError> {
+    pub fn into_gap_draft(
+        mut self,
+        pgn: &str,
+        response: Option<&str>,
+    ) -> Result<GapDraft, ChessError> {
         let fen = self.fen();
         let legal_moves = legal_model_moves(&self.position())?;
         let pgn = response
@@ -280,6 +293,68 @@ impl AuthoredRepertoire {
             })
     }
 
+    /// Resolve a prefix as authored moves, without crossing to another route
+    /// merely because its position matches.
+    pub fn coverage_start(
+        &self,
+        prefix: &[String],
+        color: LearnerColor,
+    ) -> Result<CoverageStart, ChessError> {
+        let mut board = cozy_chess::Board::default();
+        let san = prefix
+            .iter()
+            .map(|uci| play_san(&mut board, uci))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut choices = BTreeMap::new();
+        let mut found = prefix.is_empty();
+        for route in &self.routes {
+            if route.len() >= prefix.len()
+                && route
+                    .iter()
+                    .zip(prefix)
+                    .all(|((_, played), given)| played == given)
+            {
+                found = true;
+                if let Some((_, uci)) = route.get(prefix.len()) {
+                    choices.insert(uci.clone(), play_san(&mut board.clone(), uci)?);
+                }
+            }
+        }
+        if !found {
+            return Err(invalid("The starting line is no longer in this repertoire"));
+        }
+        let next_learner_move = board.fullmove_number()
+            + u16::from(
+                board.side_to_move() == cozy_chess::Color::Black && color == LearnerColor::White,
+            );
+        Ok(CoverageStart {
+            san,
+            choices,
+            position: board_key(&board),
+            next_learner_move,
+        })
+    }
+
+    /// First opponent position and first response number after following any
+    /// prepared learner move at the selected position.
+    pub fn coverage_frontier(
+        &self,
+        prefix: &[String],
+        color: LearnerColor,
+    ) -> Result<(PositionKey, u16), ChessError> {
+        let start = self.coverage_start(prefix, color)?;
+        let learner_turn = (prefix.len() % 2 == 0) == (color == LearnerColor::White);
+        if !learner_turn {
+            return Ok((start.position, start.next_learner_move));
+        }
+        match self.learner_response(&start.position, color)? {
+            LearnerResponse::Prepared(next) => Ok((next.clone(), start.next_learner_move + 1)),
+            _ => Err(invalid(
+                "Choose a starting line with a prepared reply to play first",
+            )),
+        }
+    }
+
     /// Find the shortest legal lead-in to a forecast gap using the scan's
     /// prepared-reply contract. Opponent moves may transpose to saved replies.
     pub fn coverage_line(
@@ -288,10 +363,26 @@ impl AuthoredRepertoire {
         opponent_move: &str,
         color: LearnerColor,
     ) -> Result<CoverageLine, ChessError> {
+        self.coverage_line_from(&[], position, opponent_move, color)
+    }
+
+    /// Find the shortest in-scope route from an authored starting line.
+    pub fn coverage_line_from(
+        &self,
+        prefix: &[String],
+        position: &PositionKey,
+        opponent_move: &str,
+        color: LearnerColor,
+    ) -> Result<CoverageLine, ChessError> {
         if !self.needs_response(position, opponent_move, color) {
             return Err(invalid("This position no longer needs a response"));
         }
-        let start = cozy_chess::Board::default();
+        self.coverage_start(prefix, color)?;
+        let mut start = cozy_chess::Board::default();
+        let mut san = Vec::new();
+        for uci in prefix {
+            san.push(play_san(&mut start, uci)?);
+        }
         let root = board_key(&start);
         let mut queue = VecDeque::from([root.clone()]);
         let mut parents = BTreeMap::from([(root.clone(), None)]);
@@ -332,7 +423,6 @@ impl AuthoredRepertoire {
             at = parent;
         }
         let mut board = start;
-        let mut san = Vec::new();
         route.reverse();
         for uci in &route {
             san.push(play_san(&mut board, uci)?);
@@ -340,7 +430,7 @@ impl AuthoredRepertoire {
         Ok(CoverageLine {
             board,
             san,
-            anchor_route: route,
+            anchor_route: prefix.iter().cloned().chain(route).collect(),
             color,
             answers: BTreeMap::new(),
         })
