@@ -30,6 +30,10 @@ pub struct ContentItem {
     pub status: ContentStatus,
     pub definition: ChessDefinition,
     pub provenance: Vec<String>,
+    /// Explicit theme membership for new tactic admission. An absent value is
+    /// legacy or inapplicable. Normalized tactics may have an empty theme set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tactic_policy_facts: Option<crate::TacticPolicyFacts>,
     /// Earlier definition whose accepted game finding supplied this payoff extension.
     /// Used only to carry related-game attribution across this exact version change.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -78,6 +82,25 @@ impl ContentItem {
 mod tests {
     use super::*;
     use crate::{demo_catalog, plan_import};
+
+    #[test]
+    fn tactic_metadata_legacy_item_keeps_missing_membership_distinct_from_empty() {
+        let catalog = demo_catalog();
+        let item = &catalog.items[&TargetId::from("t1")];
+        let mut legacy = serde_json::to_value(item).unwrap();
+        assert_eq!(
+            legacy["tactic_policy_facts"],
+            serde_json::json!({"theme_ids": []})
+        );
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("tactic_policy_facts");
+
+        let decoded: ContentItem = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(decoded.tactic_policy_facts, None);
+        assert_eq!(serde_json::to_value(decoded).unwrap(), legacy);
+    }
 
     #[test]
     fn resolving_content_into_study_keeps_identity_and_the_version_being_answered() {

@@ -56,6 +56,11 @@ pub(super) fn plan_tactic_items<'a>(
             let before = retained.provenance.clone();
             let before_context = retained.opponent_lead_in.clone();
             let before_capture = retained.game_capture.clone();
+            let before_policy = retained.tactic_policy_facts.clone();
+            crate::TacticPolicyFacts::merge(
+                &mut retained.tactic_policy_facts,
+                &item.tactic_policy_facts,
+            );
             retained.opponent_lead_in.reconcile(&item.opponent_lead_in);
             if retained.definition == item.definition && retained.game_capture.is_none() {
                 retained.game_capture.clone_from(&item.game_capture);
@@ -71,6 +76,7 @@ pub(super) fn plan_tactic_items<'a>(
                 kind: if retained.provenance == before
                     && retained.opponent_lead_in == before_context
                     && retained.game_capture == before_capture
+                    && retained.tactic_policy_facts == before_policy
                 {
                     ChangeKind::Unchanged
                 } else {

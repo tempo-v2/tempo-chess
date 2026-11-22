@@ -20,6 +20,16 @@ impl TacticPolicyFacts {
         &self.theme_ids
     }
 
+    /// Merge equivalent, already-normalized sources. Keep a legacy missing
+    /// value open for the explicit migration.
+    pub(crate) fn merge(retained: &mut Option<Self>, incoming: &Option<Self>) {
+        if let (Some(retained), Some(incoming)) = (retained, incoming) {
+            retained
+                .theme_ids
+                .extend(incoming.theme_ids.iter().cloned());
+        }
+    }
+
     /// Normalize the historical transfer/catalog encoding at import or migration.
     /// The caller supplies the authoritative vocabulary used by its theme settings.
     /// Once normalized, read the typed facts without interpreting display fields.
