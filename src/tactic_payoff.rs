@@ -404,6 +404,11 @@ pub fn recognizable_payoff(
                 .find(|pattern| pattern.motif == Motif::DiscoveredCheck)
             && captures(&next.before, next.mv)
             && holds(&next.after, solver, baseline)
+            && !board_moves(&step.before).into_iter().any(|earlier| {
+                earlier.to == next.mv.to
+                    && captures(&step.before, earlier)
+                    && holds(&play(&step.before, earlier), solver, baseline)
+            })
             && board_moves(&step.after).into_iter().all(|defense| {
                 let reply = play(&step.after, defense);
                 board_moves(&reply).into_iter().any(|take| {
@@ -553,6 +558,28 @@ mod tests {
             proof.motifs.iter().map(|p| p.motif).collect::<Vec<_>>(),
             [Motif::HangingMaterial, Motif::Fork]
         );
+    }
+
+    #[test]
+    fn a_discovered_check_must_enable_its_capture() {
+        let independent = "n3k3/8/8/8/8/8/4B3/R3R2K w - - 0 1";
+        assert!(
+            recognizable_payoff(independent, &"a1a8".into(), &pv("a1a8"))
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            recognizable_payoff(independent, &"e2d3".into(), &pv("e2d3 e8d7 a1a8"))
+                .unwrap()
+                .is_none()
+        );
+
+        let enabled = "4k3/7n/8/8/8/8/4B3/4R2K w - - 0 1";
+        let proof = recognizable_payoff(enabled, &"e2d3".into(), &pv("e2d3 e8d7 d3h7"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(proof.motifs[0].motif, Motif::DiscoveredCheck);
+        assert_eq!(proof.line.last().unwrap().uci, "d3h7");
     }
 
     #[test]
