@@ -34,6 +34,9 @@ pub struct ContentItem {
     /// Used only to carry related-game attribution across this exact version change.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payoff_origin_version: Option<ContentVersion>,
+    /// Verified setup and finishing moves for generated Study clues.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub verified_tactic: Vec<crate::PayoffMotif>,
     /// An archived game capture verified against this exact definition.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub game_capture: Option<GameCapture>,

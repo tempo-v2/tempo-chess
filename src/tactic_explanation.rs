@@ -126,6 +126,88 @@ pub fn explain_tactic_decision(
     explain_with_payoff(&decision.fen, &decision.expected, payoff)
 }
 
+/// Project only the motif demonstrated by the currently revealed setup.
+/// At the pay-off move the board itself explains the capture or mate.
+pub fn explain_issued_tactic(
+    item: &crate::ContentItem,
+    decision_index: usize,
+) -> Result<Option<TacticExplanation>, ChessError> {
+    let decisions = &item.definition.decisions[decision_index..];
+    if item.verified_tactic.is_empty() {
+        return explain_tactic_decision(decisions);
+    }
+    let ply: usize = item.definition.decisions[..decision_index]
+        .iter()
+        .map(|d| 1 + d.autoplay.len())
+        .sum();
+    let Some(step) = item.verified_tactic.iter().find(|step| step.setup == ply) else {
+        return explain_tactic_move(&decisions[0].fen, &decisions[0].expected);
+    };
+    let explanation = match (
+        step.motif,
+        step.attackers.as_slice(),
+        step.targets.as_slice(),
+    ) {
+        (crate::Motif::Fork, [attacker], [first, second, ..]) => {
+            let destination = item
+                .definition
+                .decisions
+                .iter()
+                .scan(0, |ply, decision| {
+                    let index = *ply;
+                    *ply += 1 + decision.autoplay.len();
+                    Some((index, decision))
+                })
+                .find(|(index, _)| *index == step.finish)
+                .and_then(|(_, decision)| {
+                    let board = parse_position(&decision.fen, true).ok()?;
+                    let actual = legal_move(&board, &decision.expected.uci).ok()?;
+                    Some(actual.to.to_string())
+                });
+            let prize = step
+                .targets
+                .iter()
+                .find(|target| Some(target.square.as_str()) == destination.as_deref())
+                .unwrap_or(first);
+            let other = if prize == first { second } else { first };
+            Some(TacticExplanation::Fork {
+                attacker: attacker.clone(),
+                targets: [prize.clone(), other.clone()],
+            })
+        }
+        (crate::Motif::Pin, [attacker], [front, rear]) => Some(TacticExplanation::Pin {
+            attacker: attacker.clone(),
+            front: front.clone(),
+            rear: rear.clone(),
+        }),
+        (crate::Motif::Skewer, [attacker], [front, rear]) => Some(TacticExplanation::Skewer {
+            attacker: attacker.clone(),
+            front: front.clone(),
+            rear: rear.clone(),
+        }),
+        (crate::Motif::DiscoveredAttack, [attacker], [target]) => {
+            Some(TacticExplanation::DiscoveredAttack {
+                attacker: attacker.clone(),
+                target: target.clone(),
+            })
+        }
+        (crate::Motif::DiscoveredCheck, [attacker], [target]) => {
+            Some(TacticExplanation::DiscoveredCheck {
+                attacker: attacker.clone(),
+                target: target.clone(),
+            })
+        }
+        (crate::Motif::MateInTwo, _, _) => Some(TacticExplanation::MatingLine),
+        (crate::Motif::HangingMaterial, _, [captured]) if step.finish == step.setup => {
+            Some(TacticExplanation::HangingPiece {
+                captured: captured.clone(),
+            })
+        }
+        _ => explain_tactic_move(&decisions[0].fen, &decisions[0].expected)?,
+    };
+    Ok(explanation)
+}
+
 // Track both participants back to the correction board, including pieces that
 // move again before the final capture. Castling uses king-to-rook internally.
 fn payoff_subjects<'a>(

@@ -32,6 +32,15 @@ pub enum Motif {
     MateInTwo,
 }
 
+/// What a verified tactical opportunity shows at the actual game decision.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct TacticRecognition {
+    #[serde(default)]
+    pub played_motif: Option<Motif>,
+    pub motifs: std::collections::BTreeSet<Motif>,
+    pub outcome: TacticalOutcome,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct MotifCandidate {
     pub motif: Motif,
@@ -60,6 +69,90 @@ pub enum PersonalPuzzleKind {
 pub struct PersonalTacticsEvidence {
     pub candidates: Vec<MotifCandidate>,
     pub puzzle: Option<PersonalPuzzle>,
+}
+
+pub fn recognition_roots(assessment: &TacticalAssessment) -> std::collections::BTreeSet<String> {
+    assessment
+        .personal
+        .iter()
+        .flat_map(|personal| &personal.candidates)
+        .filter(|c| {
+            !matches!(c.motif, Motif::MateInOne | Motif::MateInTwo)
+                && assessment.accepted_moves.contains(&c.answer)
+        })
+        .map(|c| c.answer.uci.clone())
+        .collect()
+}
+
+/// Count opportunities available at the actual learner turn. The same proof
+/// applies to the played root and each sound candidate. A short forced mate
+/// can supply its own verified reply and finish.
+pub fn recognize_game_tactics<'a>(
+    assessment: &TacticalAssessment,
+    fen: &str,
+    variation: impl Fn(&ChessAnswer) -> Option<&'a [String]>,
+) -> Option<TacticRecognition> {
+    let personal = assessment.personal.as_ref()?;
+    let mut qualified = std::collections::BTreeMap::new();
+    let mut pending = false;
+    let mut candidates: Vec<_> = personal
+        .candidates
+        .iter()
+        .filter(|c| assessment.accepted_moves.contains(&c.answer))
+        .collect();
+    candidates.sort_by_key(|c| !matches!(c.motif, Motif::MateInOne | Motif::MateInTwo));
+    if candidates.is_empty() {
+        return None;
+    }
+    for candidate in &candidates {
+        if qualified.contains_key(&candidate.answer.uci) {
+            continue;
+        }
+        let mut line = vec![candidate.answer.uci.clone()];
+        line.extend(candidate.continuation.iter().map(|m| m.uci.clone()));
+        let search = variation(&candidate.answer);
+        let evidence = search.unwrap_or(&line);
+        if let Ok(Some(proof)) = crate::recognizable_payoff(fen, &candidate.answer, evidence) {
+            let motif = proof.motifs[0].motif;
+            if candidates
+                .iter()
+                .any(|expected| expected.motif == motif && expected.answer == candidate.answer)
+            {
+                qualified.insert(candidate.answer.uci.clone(), motif);
+            }
+        } else if search.is_none()
+            && candidate.continuation.is_empty()
+            && candidate.motif != Motif::MateInOne
+        {
+            pending = true;
+        }
+    }
+    if pending {
+        return None;
+    }
+    let played = &assessment.played.uci;
+    let motifs = qualified.values().copied().collect();
+    let outcome = if qualified.contains_key(played) {
+        TacticalOutcome::PlayedTactic
+    } else if qualified.is_empty() {
+        TacticalOutcome::Uncertain
+    } else if assessment.accepted_moves.contains(&assessment.played)
+        || matches!(
+            assessment.outcome,
+            TacticalOutcome::GoodAlternative | TacticalOutcome::UnclearPlay
+        )
+    {
+        TacticalOutcome::GoodAlternative
+    } else if qualified.len() == 1 {
+        TacticalOutcome::MissedTactic
+    } else {
+        TacticalOutcome::UnclearMiss
+    };
+    Some(TacticRecognition {
+        motifs,
+        outcome,
+        played_motif: qualified.get(played).copied(),
+    })
 }
 
 pub struct PersonalTacticsDetector<E>(pub E);
