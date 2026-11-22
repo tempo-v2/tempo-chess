@@ -174,3 +174,6 @@ mod game_report_facts;
 pub use game_report_facts::{
     GameReportFacts, GameTimeControl, LearnerGameResult, game_report_facts,
 };
+
+mod opening_partition;
+pub use opening_partition::partition_black_openings;
