@@ -20,13 +20,33 @@ pub struct GeneratedTacticalPuzzle {
 }
 
 impl GeneratedTacticalPuzzle {
-    /// Extend a newly proposed root only when its own engine line settles the tactic.
-    pub fn with_payoff(mut self, variation: &[String]) -> Self {
-        // Optional analysis cannot invalidate an already accepted puzzle.
-        if let Ok(Some(extended)) = extend_generated_tactic(&self.item, variation) {
-            self.item.definition = extended.next.definition;
+    /// Admit only a line with a demonstrated motif. Compute the original
+    /// generated identity from the selected root before replacing the line.
+    pub fn qualify(mut self, variation: Option<&[String]>) -> Result<Option<Self>, ChessError> {
+        if !self.single_root {
+            let first = &self.item.definition.decisions[0];
+            let line: Vec<_> = definition_line(&self.item)
+                .into_iter()
+                .map(|m| m.uci)
+                .collect();
+            if let Some(proof) = crate::recognizable_payoff(&first.fen, &first.expected, &line)? {
+                self.item.verified_tactic = proof.motifs;
+            }
+            return Ok(Some(self));
         }
-        self
+        let decision = &self.item.definition.decisions[0];
+        let first = [decision.expected.uci.clone()];
+        let Some(proof) = crate::recognizable_payoff(
+            &decision.fen,
+            &decision.expected,
+            variation.unwrap_or(&first),
+        )?
+        else {
+            return Ok(None);
+        };
+        self.item.definition = proved_definition(&decision.fen, &proof)?;
+        self.item.verified_tactic = proof.motifs;
+        Ok(Some(self))
     }
 
     /// Fetch current items matching any of these keys before calling `plan`.
@@ -48,6 +68,7 @@ impl GeneratedTacticalPuzzle {
                 == self.item.definition.decisions.first().map(|d| &d.expected)
         {
             self.item.definition.clone_from(&prior.definition);
+            self.item.verified_tactic.clone_from(&prior.verified_tactic);
         }
         let mut plan = crate::plan_tactic_capture::plan_tactic_items(current, [&self.item])?;
         let target = plan.content.changes[0].target.clone();
@@ -150,6 +171,11 @@ fn prepare_line(
         .next()
         .expect("one generated tactic");
     if mate {
+        if line.len() == 3 && !crate::personal_tactics::mate_moves(&board).is_empty() {
+            return Err(ChessError::InvalidContent(
+                "the stored mating finish would be ambiguous with an earlier mate".into(),
+            ));
+        }
         let mut finish = board.clone();
         for answer in line {
             let mv = crate::standard_uci::legal_move(&finish, &answer.uci)?;
@@ -169,29 +195,110 @@ fn prepare_line(
     })
 }
 
-/// Eligible legacy shape after Store establishes a game training binding.
-/// Recompute the original generated key and exclude items shared with authors.
-pub fn short_generated_decision(item: &ContentItem) -> Option<&crate::Decision> {
-    let [decision] = item.definition.decisions.as_slice() else {
-        return None;
-    };
+/// Classify only the original output of this compiler, after Store has
+/// established the game binding. Authored and imported aliases own their
+/// definitions independently, even when a game finding refers to them.
+pub fn game_generated_definition(item: &ContentItem) -> bool {
     if !item.active()
         || item.game_capture.is_some()
-        || !decision.autoplay.is_empty()
-        || item.definition.scheme != crate::GradingScheme::ExactSequenceV1
         || item
             .provenance
             .iter()
-            .any(|p| crate::tactic_record::is_source_token(p) && *p != item.target.0)
+            .any(|key| crate::tactic_record::is_source_token(key) && *key != item.target.0)
     {
-        return None;
+        return false;
     }
-    let generated = prepare_tactical_puzzle(&decision.fen, &decision.expected, &[]).ok()?;
-    (item.target == generated.item.target && item.definition == generated.item.definition)
-        .then_some(decision)
+    let Some(first) = item.definition.decisions.first() else {
+        return false;
+    };
+    let root = prepare_tactical_puzzle(&first.fen, &first.expected, &[]).ok();
+    root.is_some_and(|root| root.item.target == item.target)
+        || (item.definition.scheme == crate::GradingScheme::ForcedMateV1
+            && prepare_line(&first.fen, &definition_line(item), true, &[])
+                .is_ok_and(|mate| mate.item.target == item.target))
+}
+
+fn definition_line(item: &ContentItem) -> Vec<ChessAnswer> {
+    item.definition
+        .decisions
+        .iter()
+        .flat_map(|d| std::iter::once(d.expected.clone()).chain(d.autoplay.iter().cloned()))
+        .collect()
+}
+
+fn proved_definition(
+    fen: &str,
+    proof: &crate::TacticalPayoff,
+) -> Result<crate::ChessDefinition, ChessError> {
+    let mut definition = prepare_line(fen, &proof.line, false, &[])?.item.definition;
+    if proof
+        .motifs
+        .last()
+        .is_some_and(|m| matches!(m.motif, crate::Motif::MateInOne | crate::Motif::MateInTwo))
+    {
+        // The exact-sequence grader plays the prefix, then accepts any
+        // legal mate on the final decision.
+        definition.scheme = crate::GradingScheme::ForcedMateV1;
+    }
+    definition.validate()?;
+    Ok(definition)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GameTacticQualification {
+    Kept,
+    Revised(Box<GeneratedTacticExtension>),
+    Withheld,
+}
+
+/// Verify an existing generated card against a contemporary defense search.
+/// Existing full short mates also have a complete, independently checkable
+/// line and can be evaluated with their issued replies.
+pub fn requalify_game_tactic(
+    item: &ContentItem,
+    variation: &[String],
+) -> Result<GameTacticQualification, ChessError> {
+    if !game_generated_definition(item) {
+        return Err(ChessError::InvalidContent(
+            "expected game-generated content".into(),
+        ));
+    }
+    let first = &item.definition.decisions[0];
+    let retained: Vec<_> = definition_line(item).into_iter().map(|m| m.uci).collect();
+    let line = if item.definition.scheme == crate::GradingScheme::ForcedMateV1
+        && prepare_line(&first.fen, &definition_line(item), true, &[])
+            .is_ok_and(|mate| mate.item.target == item.target)
+    {
+        &retained
+    } else {
+        variation
+    };
+    let Some(proof) = crate::recognizable_payoff(&first.fen, &first.expected, line)? else {
+        return Ok(GameTacticQualification::Withheld);
+    };
+    let definition = proved_definition(&first.fen, &proof)?;
+    if definition == item.definition && proof.motifs == item.verified_tactic {
+        return Ok(GameTacticQualification::Kept);
+    }
+    let mut next = item.clone();
+    next.definition = definition;
+    next.verified_tactic = proof.motifs;
+    next.payoff_origin_version = Some(item.payoff_origin_version.unwrap_or(item.version));
+    next.version.0 = item
+        .version
+        .0
+        .checked_add(1)
+        .ok_or_else(|| ChessError::InvalidContent("content version exhausted".into()))?;
+    Ok(GameTacticQualification::Revised(Box::new(
+        GeneratedTacticExtension {
+            prior: item.clone(),
+            next,
+        },
+    )))
 }
 
 /// A verified replacement and the exact current item from which it was derived.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GeneratedTacticExtension {
     prior: ContentItem,
     next: ContentItem,
@@ -203,60 +310,4 @@ impl GeneratedTacticExtension {
     pub fn replacement(&self) -> &ContentItem {
         &self.next
     }
-}
-
-/// Produce the next definition for the original generated target. Store
-/// verifies the old item and version again when it publishes the replacement.
-pub fn extend_generated_tactic(
-    item: &ContentItem,
-    variation: &[String],
-) -> Result<Option<GeneratedTacticExtension>, ChessError> {
-    let Some(d) = short_generated_decision(item) else {
-        return Ok(None);
-    };
-    let Some(line) = crate::tactical_payoff(&d.fen, &d.expected, variation)? else {
-        return Ok(None);
-    };
-    if line.len() == 1 {
-        return Ok(None);
-    }
-    let mut next = item.clone();
-    next.payoff_origin_version = Some(item.version);
-    next.definition = prepare_line(&d.fen, &line, false, &[])?.item.definition;
-    let last = next
-        .definition
-        .decisions
-        .last()
-        .expect("nonempty verified line");
-    let mut finish = parse_position(&last.fen, true)?;
-    finish.play_unchecked(crate::standard_uci::legal_move(
-        &finish,
-        &last.expected.uci,
-    )?);
-    if finish.status() == cozy_chess::GameStatus::Won {
-        // This scheme replays an alternate mating finish from the last board.
-        // Only use a continuation when earlier decisions cannot already mate.
-        for d in &next.definition.decisions[..next.definition.decisions.len() - 1] {
-            let board = parse_position(&d.fen, true)?;
-            if board.generate_moves(|moves| {
-                moves.into_iter().any(|mv| {
-                    let mut after = board.clone();
-                    after.play_unchecked(mv);
-                    after.status() == cozy_chess::GameStatus::Won
-                })
-            }) {
-                return Ok(None);
-            }
-        }
-        next.definition.scheme = crate::GradingScheme::ForcedMateV1;
-    }
-    next.version.0 = next
-        .version
-        .0
-        .checked_add(1)
-        .ok_or_else(|| ChessError::InvalidContent("content version exhausted".into()))?;
-    Ok(Some(GeneratedTacticExtension {
-        prior: item.clone(),
-        next,
-    }))
 }

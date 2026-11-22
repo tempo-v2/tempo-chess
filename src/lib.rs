@@ -44,7 +44,7 @@ mod hanging_material;
 mod personal_tactics;
 mod tactic_explanation;
 mod tactic_payoff;
-pub use tactic_payoff::tactical_payoff;
+pub use tactic_payoff::{PayoffMotif, TacticalPayoff, recognizable_payoff, tactical_payoff};
 mod tactical_evaluation;
 mod tactical_puzzle;
 pub use game_detector::{
@@ -60,17 +60,19 @@ pub use hanging_material::{
 };
 pub use personal_tactics::{
     Motif, MotifCandidate, PersonalPuzzle, PersonalPuzzleKind, PersonalTacticsDetector,
-    PersonalTacticsEvidence,
+    PersonalTacticsEvidence, TacticRecognition, recognition_roots, recognize_game_tactics,
 };
-pub use tactic_explanation::{TacticExplanation, explain_tactic_decision, explain_tactic_move};
+pub use tactic_explanation::{
+    TacticExplanation, explain_issued_tactic, explain_tactic_decision, explain_tactic_move,
+};
 pub use tactical_evaluation::{
     EvaluationFailure, EvaluationProvenance, EvaluationScore, EvaluationStatus, RootEvaluation,
     RootScore, ScoreBound, TacticalEvaluationRequest, TacticalEvaluator,
 };
 pub use tactical_puzzle::{
-    GeneratedTacticExtension, GeneratedTacticalPuzzle, TacticalPuzzlePlan, extend_generated_tactic,
-    plan_personal_puzzle, plan_tactical_puzzle, prepare_personal_puzzle, prepare_tactical_puzzle,
-    short_generated_decision,
+    GameTacticQualification, GeneratedTacticExtension, GeneratedTacticalPuzzle, TacticalPuzzlePlan,
+    game_generated_definition, plan_personal_puzzle, plan_tactical_puzzle, prepare_personal_puzzle,
+    prepare_tactical_puzzle, requalify_game_tactic,
 };
 mod played_game_timeline;
 pub use played_game_timeline::{PlayedGameTimeline, PositionOccurrence};
