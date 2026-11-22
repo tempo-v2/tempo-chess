@@ -35,8 +35,8 @@ mod fixture_comparator;
 mod fixture_parser;
 mod game_comparator;
 pub use authored_repertoire::{
-    AuthoredRepertoire, CoverageLine, DepartureKind, GapDraft, LearnerResponse, OpponentGap,
-    RepertoireAdherence, legal_model_moves, legal_successors,
+    AuthoredRepertoire, CoverageLine, CoverageStart, DepartureKind, GapDraft, LearnerResponse,
+    OpponentGap, RepertoireAdherence, legal_model_moves, legal_successors,
 };
 mod game_detector;
 mod hanging_capture;
