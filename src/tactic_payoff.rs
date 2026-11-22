@@ -1,6 +1,6 @@
 //! Verify the connected motifs demonstrated by a candidate game continuation.
 use crate::{
-    BoardSubject, ChessAnswer, ChessError, Motif, MotifCandidate,
+    BoardSubject, ChessAnswer, ChessDefinition, ChessError, Decision, Motif, MotifCandidate,
     hanging_capture::hanging_capture_target,
     personal_tactics::{
         absolute_pins, collect_attack_patterns, mate_moves, pin_blocks_recapture, subject,
@@ -145,6 +145,72 @@ fn holds(board: &Board, solver: Color, baseline: i32) -> bool {
             }
             holds_after_response(board, reply, solver, baseline)
         })
+}
+
+/// Whether a verified one-move hanging-material lesson has another capture
+/// that independently retains at least the lesson's material gain.
+/// Call for game-owned lessons at qualification or when rechecking a verdict.
+pub fn ambiguous_hanging_material(
+    definition: &ChessDefinition,
+    motifs: &[PayoffMotif],
+) -> Result<bool, ChessError> {
+    let [
+        Decision {
+            fen,
+            expected,
+            autoplay,
+        },
+    ] = definition.decisions.as_slice()
+    else {
+        return Ok(false);
+    };
+    if !autoplay.is_empty() {
+        return Ok(false);
+    }
+    // Older definitions can predate the stored motif. Prove the same
+    // standalone move before making an admission decision for them.
+    let proof;
+    let motifs = if motifs.is_empty() {
+        let Some(found) = recognizable_payoff(fen, expected, std::slice::from_ref(&expected.uci))?
+        else {
+            return Ok(false);
+        };
+        proof = found;
+        proof.motifs.as_slice()
+    } else {
+        motifs
+    };
+    let [motif] = motifs else {
+        return Ok(false);
+    };
+    if motif.motif != Motif::HangingMaterial
+        || motif.setup != 0
+        || motif.finish != 0
+        || motif.material_gain <= 0
+    {
+        return Ok(false);
+    }
+    let board = parse_position(fen, true)?;
+    let expected = legal_move(&board, &expected.uci)?;
+    let solver = board.side_to_move();
+    let after_expected = play(&board, expected);
+    // Find the strongest material floor the original capture can keep.
+    // The payoff check is strict, so a floor of n proves retention of n + 1.
+    let Some(floor) = (material(&board, solver)..material(&after_expected, solver))
+        .rev()
+        .find(|&floor| holds(&after_expected, solver, floor))
+    else {
+        return Ok(false);
+    };
+    Ok(board_moves(&board)
+        .into_iter()
+        .filter(|&mv| mv != expected && captures(&board, mv))
+        .any(|mv| {
+            let after = play(&board, mv);
+            // A checkmating capture has no defensive reply.
+            (after.status() == GameStatus::Won && material(&after, solver) > floor)
+                || holds(&after, solver, floor)
+        }))
 }
 
 fn patterns(step: &Step) -> Vec<MotifCandidate> {
@@ -485,6 +551,125 @@ mod tests {
     }
 
     #[test]
+    fn a_game_capture_drill_requires_one_proven_capture() {
+        use crate::{GameTacticQualification, requalify_game_tactic};
+
+        let ambiguous = "2k3rr/ppp5/1n2P2p/4Nn2/3P2pP/2N5/P4PP1/R4RK1 b - - 0 1";
+        let single = ambiguous.replace("3P2pP", "3P2p1");
+        let defended_alternative = ambiguous.replace("R4RK1", "5RKR");
+        let expected = "f5d4".into();
+        for (fen, withheld) in [
+            (ambiguous, true),
+            (single.as_str(), false),
+            (defended_alternative.as_str(), false),
+        ] {
+            let prepare = || prepare_tactical_puzzle(fen, &expected, &[]).unwrap();
+            assert_eq!(
+                prepare()
+                    .qualify(None)
+                    .unwrap()
+                    .unwrap()
+                    .plan(&Catalog::default())
+                    .unwrap()
+                    .is_none(),
+                withheld,
+                "{fen}"
+            );
+
+            let old = prepare().plan(&Catalog::default()).unwrap();
+            let mut item = old.content.catalog.items[&old.target].clone();
+            for label in ["From your games", "Renamed", ""] {
+                item.label = label.into();
+                assert_eq!(
+                    requalify_game_tactic(&item, &pv("f5d4")).unwrap()
+                        == GameTacticQualification::Withheld,
+                    withheld,
+                    "{fen}, {label}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_game_capture_drill_compares_gains_after_defenses() {
+        let equal = "7k/8/8/1r1p1r2/3N4/6p1/7P/K7 w - - 0 1";
+        for answer in ["d4b5", "d4f5"] {
+            let puzzle = prepare_tactical_puzzle(equal, &answer.into(), &[]).unwrap();
+            // Either rook capture gains five immediately but retains only
+            // four after ...gxh2. Both are equally valid ways to win material.
+            let qualified = puzzle.qualify(None).unwrap().unwrap();
+            assert!(qualified.plan(&Catalog::default()).unwrap().is_none());
+        }
+
+        let smaller_alternative = equal.replace("1r1p1r2", "1r1p1b2");
+        let puzzle = prepare_tactical_puzzle(&smaller_alternative, &"d4b5".into(), &[]).unwrap();
+        let qualified = puzzle.qualify(None).unwrap().unwrap();
+        assert!(qualified.plan(&Catalog::default()).unwrap().is_some());
+    }
+
+    #[test]
+    fn a_mating_capture_can_also_keep_the_material_gain() {
+        let fen = "7k/6r1/5K2/8/4r1Q1/8/8/8 w - - 0 1";
+        let puzzle = prepare_tactical_puzzle(fen, &"g4e4".into(), &[]).unwrap();
+        let qualified = puzzle.qualify(None).unwrap().unwrap();
+        assert!(qualified.plan(&Catalog::default()).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_qualified_line_cannot_reactivate_an_ambiguous_game_definition() {
+        let fen = "8/2b5/3k4/1r1p1r2/3N4/8/8/K7 w - - 0 1";
+        let root = "d4b5".into();
+        let prepare = || prepare_tactical_puzzle(fen, &root, &[]).unwrap();
+        let qualify = || {
+            prepare()
+                .qualify(Some(&pv("d4b5 d6e7 b5c7")))
+                .unwrap()
+                .unwrap()
+        };
+        let short = || prepare().qualify(None).unwrap().unwrap();
+        assert!(short().plan(&Catalog::default()).unwrap().is_none());
+        let legacy = prepare().plan(&Catalog::default()).unwrap();
+        let fresh = qualify().plan(&Catalog::default()).unwrap().unwrap();
+        assert_eq!(
+            fresh.content.catalog.items[&fresh.target]
+                .definition
+                .decisions
+                .len(),
+            2
+        );
+        let retained_longer = short().plan(&fresh.content.catalog).unwrap().unwrap();
+        assert_eq!(retained_longer.target, fresh.target);
+        assert_eq!(retained_longer.content.catalog, fresh.content.catalog);
+        let mut catalog = legacy.content.catalog;
+        let item = catalog.items.get_mut(&legacy.target).unwrap();
+        item.status = crate::ContentStatus::Quarantined;
+        let proof = recognizable_payoff(fen, &root, &pv("d4b5"))
+            .unwrap()
+            .unwrap();
+        assert!(qualify().plan(&catalog).unwrap().is_none());
+        catalog
+            .items
+            .get_mut(&legacy.target)
+            .unwrap()
+            .verified_tactic = proof.motifs;
+        assert!(qualify().plan(&catalog).unwrap().is_none());
+
+        let authored = catalog.items.get_mut(&legacy.target).unwrap();
+        authored.game_capture = Some(crate::GameCapture {
+            capture_id: "independent-capture".into(),
+        });
+        let approved = qualify().plan(&catalog).unwrap().unwrap();
+        let authored_short = short().plan(&catalog).unwrap().unwrap();
+        assert_eq!(approved.target, legacy.target);
+        assert_eq!(authored_short.target, legacy.target);
+        assert_eq!(authored_short.content.catalog, approved.content.catalog);
+        assert_eq!(
+            approved.content.catalog.items[&legacy.target].definition,
+            catalog.items[&legacy.target].definition
+        );
+    }
+
+    #[test]
     fn checking_fork_reaches_bishop_and_rescan_retains_the_target() {
         let root = "d1h5".into();
         let prepare = || prepare_tactical_puzzle(FORK, &root, &[]).unwrap();
@@ -493,6 +678,7 @@ mod tests {
             .unwrap()
             .unwrap()
             .plan(&Catalog::default())
+            .unwrap()
             .unwrap();
         let item = &fresh.content.catalog.items[&fresh.target];
         assert_eq!(item.definition.decisions.len(), 2);
@@ -537,6 +723,7 @@ mod tests {
             .unwrap()
             .unwrap()
             .plan(&authored_catalog)
+            .unwrap()
             .unwrap();
         assert_eq!(repeat.target, authored.target);
         assert_eq!(
@@ -614,6 +801,7 @@ mod tests {
             .unwrap()
             .unwrap()
             .plan(&Catalog::default())
+            .unwrap()
             .unwrap();
         let item = &plan.content.catalog.items[&plan.target];
         use tempo_study::Grader;
@@ -653,6 +841,7 @@ mod tests {
             .unwrap()
             .unwrap()
             .plan(&Catalog::default())
+            .unwrap()
             .unwrap();
         let decisions = &plan.content.catalog.items[&plan.target]
             .definition
