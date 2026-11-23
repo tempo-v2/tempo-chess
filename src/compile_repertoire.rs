@@ -130,6 +130,7 @@ impl RepertoireImport<'_> {
                         }],
                     },
                     provenance: vec![self.source.to_owned()],
+                    tactic_policy_facts: None,
                     payoff_origin_version: None,
                     verified_tactic: Vec::new(),
                     game_capture: None,

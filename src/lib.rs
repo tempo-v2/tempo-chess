@@ -115,7 +115,9 @@ pub use structure::{
 };
 mod standard_uci;
 mod tactic_pgn;
+mod tactic_policy_facts;
 mod tactic_record;
+mod tactic_themes;
 
 pub use apply_setup_move::apply_setup_move;
 pub use catalog::Catalog;
@@ -169,7 +171,9 @@ pub use tactic_pgn::{
     TacticPgnMove, TacticPgnPreview, TacticPgnRoute, TacticPgnRow, TacticPgnSelection,
     TacticPgnStatus, preview_tactic_pgn,
 };
+pub use tactic_policy_facts::TacticPolicyFacts;
 pub use tactic_record::TacticRecord;
+pub use tactic_themes::{TacticTheme, known_tactic_theme, tactic_themes};
 
 mod game_report_facts;
 pub use game_report_facts::{

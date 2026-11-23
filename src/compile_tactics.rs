@@ -98,6 +98,7 @@ fn compile_record(
             decisions,
         },
         provenance,
+        tactic_policy_facts: Some(crate::TacticPolicyFacts::default()),
         payoff_origin_version: None,
         verified_tactic: Vec::new(),
         game_capture: None,

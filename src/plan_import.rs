@@ -191,6 +191,9 @@ pub(super) fn version_imported_item(
     item.provenance.extend(old.provenance.iter().cloned());
     item.provenance.sort();
     item.provenance.dedup();
+    let mut retained_policy = old.tactic_policy_facts.clone();
+    crate::TacticPolicyFacts::merge(&mut retained_policy, &item.tactic_policy_facts);
+    item.tactic_policy_facts = retained_policy;
     if old.definition != item.definition {
         item.payoff_origin_version = None;
         item.verified_tactic.clear();
@@ -225,6 +228,17 @@ pub(super) fn version_imported_item(
 mod tests {
     use super::*;
     use crate::demo_catalog;
+
+    #[test]
+    fn tactic_metadata_merge_preserves_missing_legacy_state_until_migration() {
+        let mut current = demo_catalog();
+        let target = TargetId::from("t1");
+        current.items.get_mut(&target).unwrap().tactic_policy_facts = None;
+        let incoming = demo_catalog();
+        assert!(incoming.items[&target].tactic_policy_facts.is_some());
+        let merged = plan_import(&current, &incoming).unwrap();
+        assert!(merged.catalog.items[&target].tactic_policy_facts.is_none());
+    }
 
     #[test]
     fn metadata_preserves_version_while_response_change_versions_only_target() {

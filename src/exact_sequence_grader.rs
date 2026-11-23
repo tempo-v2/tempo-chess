@@ -104,39 +104,18 @@ impl Grader for ExactSequenceGrader {
 #[cfg(test)]
 mod tests {
     use crate::*;
-    use std::convert::Infallible;
-    use tempo_study::{
-        AttemptStatus, Availability, Exercise, GradingError, QuestionSource, StudyError,
-        next_available_exercise_if_any,
-    };
+    use tempo_study::{AttemptStatus, GradingError, StudyError, start_selected_exercise};
     use tempo_types::{Grade, Revision, TargetId};
 
-    struct Source(Option<Exercise<ChessDefinition>>);
-    impl QuestionSource for Source {
-        type Definition = ChessDefinition;
-        type Error = Infallible;
-        fn next(&mut self) -> Result<Availability<Exercise<ChessDefinition>>, Infallible> {
-            Ok(self
-                .0
-                .take()
-                .map(Availability::Ready)
-                .unwrap_or(Availability::Empty))
-        }
-    }
     fn tactic() -> (ChessDefinition, ChessAttempt) {
         let catalog = demo_catalog();
         let exercise = catalog.items[&TargetId::from("t1")].exercise();
-        let definition = exercise.definition.clone();
-        let Availability::Ready(started) = next_available_exercise_if_any(
-            &mut Source(Some(exercise)),
-            &ExactSequenceGrader,
-            "dataset".into(),
-            "a1".into(),
-        )
-        .unwrap() else {
-            panic!("fixture ready")
-        };
-        (definition, started.attempt)
+        let attempt =
+            start_selected_exercise(&exercise, &ExactSequenceGrader, "dataset".into(), || {
+                "a1".into()
+            })
+            .unwrap();
+        (exercise.definition, attempt)
     }
 
     #[test]
